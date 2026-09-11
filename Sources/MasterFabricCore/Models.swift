@@ -8,6 +8,10 @@ public struct SystemInfo: Sendable, Codable, Equatable {
     public var ramGB: Double
     public var uptimeSeconds: TimeInterval
     public var cpuCount: Int
+    /// Performance (P) logical cores. 0 when unknown.
+    public var performanceCoreCount: Int
+    /// Efficiency (E) logical cores. 0 on Intel or when unknown.
+    public var efficiencyCoreCount: Int
 
     public init(
         model: String,
@@ -16,7 +20,9 @@ public struct SystemInfo: Sendable, Codable, Equatable {
         macOSVersion: String,
         ramGB: Double,
         uptimeSeconds: TimeInterval,
-        cpuCount: Int
+        cpuCount: Int,
+        performanceCoreCount: Int = 0,
+        efficiencyCoreCount: Int = 0
     ) {
         self.model = model
         self.modelIdentifier = modelIdentifier
@@ -25,6 +31,8 @@ public struct SystemInfo: Sendable, Codable, Equatable {
         self.ramGB = ramGB
         self.uptimeSeconds = uptimeSeconds
         self.cpuCount = cpuCount
+        self.performanceCoreCount = performanceCoreCount
+        self.efficiencyCoreCount = efficiencyCoreCount
     }
 
     public var uptimeFormatted: String {

@@ -68,12 +68,12 @@ public enum HistoryStore {
     private static let lock = NSLock()
 
     public static func record(now: Date = Date()) {
-        lock.lock()
-        defer { lock.unlock() }
-        var samples = loadUnlocked()
         let status = StatusService.current()
         let load = CPULoadService.current()
         let battery = BatteryService.current()
+        lock.lock()
+        defer { lock.unlock() }
+        var samples = loadUnlocked()
         samples.append(
             HistorySample(
                 timestamp: now,

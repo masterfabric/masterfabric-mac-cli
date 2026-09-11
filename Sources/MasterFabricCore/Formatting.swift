@@ -40,7 +40,7 @@ public enum TextFormat {
         Identifier: \(info.modelIdentifier)
         Chip:       \(info.chip)
         macOS:      \(info.macOSVersion)
-        CPU cores:  \(info.cpuCount)
+        CPU cores:  \(cpuCoresLine(info))
         Memory:     \(String(format: "%.1f", info.ramGB)) GB
         Uptime:     \(info.uptimeFormatted)
         """
@@ -136,6 +136,13 @@ public enum TextFormat {
         return parts.joined(separator: " · ")
     }
 
+    private static func cpuCoresLine(_ info: SystemInfo) -> String {
+        if info.performanceCoreCount > 0, info.efficiencyCoreCount > 0 {
+            return "\(info.cpuCount) (\(info.performanceCoreCount)P+\(info.efficiencyCoreCount)E)"
+        }
+        return "\(info.cpuCount)"
+    }
+
     public static func battery(_ b: BatteryInfo) -> String {
         guard b.isPresent else { return L10n.t("battery.absent") }
         var lines: [String] = []
@@ -181,9 +188,20 @@ public enum TextFormat {
             String(format: "Overall: %.1f%%  (user %.1f%% / sys %.1f%% / idle %.1f%%)",
                    c.overallPercent, c.userPercent, c.systemPercent, c.idlePercent),
         ]
+        if let p = c.performancePercent, let e = c.efficiencyPercent {
+            lines.append(String(format: "P-cores: %.1f%% (%d)   E-cores: %.1f%% (%d)",
+                                p, c.performanceCoreCount, e, c.efficiencyCoreCount))
+        }
         if !c.perCorePercent.isEmpty {
             let cores = c.perCorePercent.enumerated().map { i, v in
-                String(format: "  core%02d: %.1f%%", i, v)
+                let tag: String
+                if c.efficiencyCoreCount > 0, c.performanceCoreCount > 0,
+                   c.perCorePercent.count == c.efficiencyCoreCount + c.performanceCoreCount {
+                    tag = i < c.efficiencyCoreCount ? "E" : "P"
+                } else {
+                    tag = "core"
+                }
+                return String(format: "  %@%02d: %.1f%%", tag as NSString, i, v)
             }.joined(separator: "\n")
             lines.append(cores)
         }

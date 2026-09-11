@@ -121,19 +121,33 @@ public struct CPULoadInfo: Sendable, Codable, Equatable {
     public var userPercent: Double
     public var systemPercent: Double
     public var idlePercent: Double
+    /// Average load across performance cores (Apple Silicon).
+    public var performancePercent: Double?
+    /// Average load across efficiency cores (Apple Silicon).
+    public var efficiencyPercent: Double?
+    public var performanceCoreCount: Int
+    public var efficiencyCoreCount: Int
 
     public init(
         overallPercent: Double,
         perCorePercent: [Double],
         userPercent: Double,
         systemPercent: Double,
-        idlePercent: Double
+        idlePercent: Double,
+        performancePercent: Double? = nil,
+        efficiencyPercent: Double? = nil,
+        performanceCoreCount: Int = 0,
+        efficiencyCoreCount: Int = 0
     ) {
         self.overallPercent = overallPercent
         self.perCorePercent = perCorePercent
         self.userPercent = userPercent
         self.systemPercent = systemPercent
         self.idlePercent = idlePercent
+        self.performancePercent = performancePercent
+        self.efficiencyPercent = efficiencyPercent
+        self.performanceCoreCount = performanceCoreCount
+        self.efficiencyCoreCount = efficiencyCoreCount
     }
 }
 

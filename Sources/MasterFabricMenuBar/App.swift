@@ -434,6 +434,8 @@ final class MenuBarModel: ObservableObject {
     @Published var isUpdating = false
 
     private var timer: Timer?
+    private var updateCheckTimer: Timer?
+    private var notifiedRemoteVersion: String?
 
     init() {
         refreshMetrics()
@@ -442,6 +444,14 @@ final class MenuBarModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: max(1.0, interval), repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshMetrics()
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            self?.checkForUpdates(promptIfAvailable: true)
+        }
+        updateCheckTimer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkForUpdates(promptIfAvailable: true)
             }
         }
     }
@@ -548,7 +558,6 @@ final class MenuBarModel: ObservableObject {
         battery = BatteryService.current()
         memory = MemoryService.current()
         disk = DiskService.current()
-        _ = CPULoadService.current()
         load = CPULoadService.current()
         power = PowerService.current()
         history = HistoryStore.snapshot()
@@ -760,10 +769,19 @@ final class MenuBarModel: ObservableObject {
                 if result.updateAvailable {
                     let remote = result.remote ?? ""
                     let alreadyDeclined = self.declinedRemoteVersion == remote
+                    self.lastNotifyMessage = result.detail
                     if forcePrompt || (promptIfAvailable && !alreadyDeclined) {
                         self.showAddIntegration = false
                         self.showEditAlert = false
+                        self.showSettings = false
                         self.showUpdateDialog = true
+                    }
+                    if !alreadyDeclined, self.notifiedRemoteVersion != remote {
+                        self.notifiedRemoteVersion = remote
+                        AlertService.postLocalNotifications(
+                            ["v\(result.local) → v\(remote). Open the menu bar to update CLI and the app (mf update)."],
+                            title: "MasterFabric update available"
+                        )
                     }
                 } else if forcePrompt {
                     self.lastNotifyMessage = VersionService.format(result)
@@ -1023,6 +1041,26 @@ struct StatusHomeView: View {
                 Divider()
             }
 
+            if model.pendingUpdate?.updateAvailable == true,
+               model.pendingUpdate?.remote != model.declinedRemoteVersion {
+                Button {
+                    model.checkForUpdates(promptIfAvailable: true, forcePrompt: true)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundStyle(.orange)
+                        Text(model.pendingUpdate.map { "Update v\($0.remote ?? "?") available" } ?? "Update available")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text("Install")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .buttonStyle(.plain)
+                Divider()
+            }
+
             if d.panelCPU {
                 row("CPU", model.status.temperature.cpuCelsius.map { String(format: "%.1f °C", $0) } ?? "N/A")
             }
@@ -1030,7 +1068,13 @@ struct StatusHomeView: View {
                 row("GPU", model.status.temperature.gpuCelsius.map { String(format: "%.1f °C", $0) } ?? "N/A")
             }
             if d.panelLoad {
-                row("Load", String(format: "%.1f%%", model.load.overallPercent))
+                let loadText: String = {
+                    if let p = model.load.performancePercent, let e = model.load.efficiencyPercent {
+                        return String(format: "%.1f%%  (P %.0f%% · E %.0f%%)", model.load.overallPercent, p, e)
+                    }
+                    return String(format: "%.1f%%", model.load.overallPercent)
+                }()
+                row("Load", loadText)
             }
             if d.panelThermal {
                 row("Thermal", model.power.thermalState)

@@ -161,7 +161,7 @@ final class MCPServer {
 
     private func tools() -> [[String: Any]] {
         [
-            tool(name: "get_info", description: "Mac model, chip, macOS version, RAM, and uptime."),
+            tool(name: "get_info", description: "Mac model, chip, macOS version, RAM, uptime, and P/E core counts."),
             tool(name: "get_status", description: "Current CPU/GPU temperatures and fan RPM."),
             tool(name: "get_temp", description: "CPU and GPU temperatures in Celsius."),
             tool(name: "get_fan", description: "Fan RPM list with CPU/GPU roles and mode (empty on fanless Macs)."),
@@ -179,7 +179,7 @@ final class MCPServer {
             tool(name: "get_memory", description: "Memory usage, swap, and pressure."),
             tool(name: "get_disk", description: "Root volume disk capacity."),
             tool(name: "get_network", description: "Network interface byte rates."),
-            tool(name: "get_cpu_load", description: "Overall and per-core CPU load."),
+            tool(name: "get_cpu_load", description: "Overall, P/E cluster, and per-core CPU load."),
             tool(name: "get_power", description: "Thermal state and low-power mode."),
             tool(name: "get_top", description: "Top processes by CPU."),
             tool(name: "get_history", description: "One-hour history sparklines."),

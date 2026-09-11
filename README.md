@@ -62,10 +62,10 @@ Copy-paste starter: [examples/mcp.json](examples/mcp.json)
 | `get_status` | CPU/GPU °C + fan RPM |
 | `get_temp` / `get_fan` | Temps or fans (CPU + GPU roles) |
 | `set_fan_mode` | `auto` or `full` (max RPM) for both fans |
-| `get_info` | Model, chip, macOS, RAM, uptime |
+| `get_info` | Model, chip (P+E cores), macOS, RAM, uptime |
 | `get_battery` | %, health, cycles, watts |
 | `get_memory` / `get_disk` / `get_network` | Host metrics |
-| `get_cpu_load` | Overall + per-core % |
+| `get_cpu_load` | Overall + P/E cluster + per-core % |
 | `get_power` | Thermal state, Low Power Mode |
 | `get_top` / `get_history` | Hot processes + 1h sparklines |
 | `set_alert_threshold` | Update `config.toml` alerts |
