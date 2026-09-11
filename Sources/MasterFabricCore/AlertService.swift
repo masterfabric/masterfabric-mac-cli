@@ -170,7 +170,7 @@ public enum AlertService {
         }
     }
 
-    public static func postLocalNotifications(_ messages: [String]) {
+    public static func postLocalNotifications(_ messages: [String], title: String = "MasterFabric Alert") {
         guard isRunningAsAppBundle else { return }
         guard !messages.isEmpty else { return }
 
@@ -186,7 +186,7 @@ public enum AlertService {
             guard ok else { return }
             for (i, message) in messages.enumerated() {
                 let content = UNMutableNotificationContent()
-                content.title = "MasterFabric Alert"
+                content.title = title
                 content.body = message
                 content.sound = .default
                 let req = UNNotificationRequest(

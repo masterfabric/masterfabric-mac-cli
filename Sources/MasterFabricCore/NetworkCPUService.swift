@@ -62,12 +62,28 @@ public enum NetworkService {
 }
 
 public enum CPULoadService {
-    private static var previous: processor_info_array_t?
-    private static var previousCount: mach_msg_type_number_t = 0
-    private static var previousCoreCount: natural_t = 0
+    private static var previousTicks: [UInt32] = []
     private static let lock = NSLock()
+    /// One-shot baseline so CLI / first menu-bar tick is a real interval, not 0%.
+    private static var didCalibrate = false
 
     public static func current() -> CPULoadInfo {
+        lock.lock()
+        let needsCalibrate = !didCalibrate || previousTicks.isEmpty
+        lock.unlock()
+
+        if needsCalibrate {
+            _ = sampleOnce()
+            Thread.sleep(forTimeInterval: 0.18)
+            lock.lock()
+            didCalibrate = true
+            lock.unlock()
+        }
+
+        return sampleOnce()
+    }
+
+    private static func sampleOnce() -> CPULoadInfo {
         var cpuCount: natural_t = 0
         var cpuInfo: processor_info_array_t?
         var cpuInfoCount: mach_msg_type_number_t = 0
@@ -95,6 +111,13 @@ public enum CPULoadService {
             vm_deallocate(mach_task_self_, vm_address_t(bitPattern: info), size)
         }
 
+        let stride = Int(CPU_STATE_MAX)
+        let coreCount = Int(cpuCount)
+        var nowTicks = [UInt32](repeating: 0, count: coreCount * stride)
+        for i in 0..<(coreCount * stride) {
+            nowTicks[i] = UInt32(bitPattern: info[i])
+        }
+
         lock.lock()
         defer { lock.unlock() }
 
@@ -103,24 +126,24 @@ public enum CPULoadService {
         var totalSystem: Double = 0
         var totalIdle: Double = 0
         var totalNice: Double = 0
+        let prev = previousTicks
+        let hasPrev = prev.count == nowTicks.count && !prev.isEmpty
 
-        let stride = Int(CPU_STATE_MAX)
-        for i in 0..<Int(cpuCount) {
+        for i in 0..<coreCount {
             let base = i * stride
-            let user = Double(info[base + Int(CPU_STATE_USER)])
-            let system = Double(info[base + Int(CPU_STATE_SYSTEM)])
-            let idle = Double(info[base + Int(CPU_STATE_IDLE)])
-            let nice = Double(info[base + Int(CPU_STATE_NICE)])
+            let user = nowTicks[base + Int(CPU_STATE_USER)]
+            let system = nowTicks[base + Int(CPU_STATE_SYSTEM)]
+            let idle = nowTicks[base + Int(CPU_STATE_IDLE)]
+            let nice = nowTicks[base + Int(CPU_STATE_NICE)]
 
-            if let prev = previous, previousCoreCount == cpuCount {
-                let pBase = i * stride
-                let dUser = user - Double(prev[pBase + Int(CPU_STATE_USER)])
-                let dSystem = system - Double(prev[pBase + Int(CPU_STATE_SYSTEM)])
-                let dIdle = idle - Double(prev[pBase + Int(CPU_STATE_IDLE)])
-                let dNice = nice - Double(prev[pBase + Int(CPU_STATE_NICE)])
+            if hasPrev {
+                let dUser = tickDelta(user, prev[base + Int(CPU_STATE_USER)])
+                let dSystem = tickDelta(system, prev[base + Int(CPU_STATE_SYSTEM)])
+                let dIdle = tickDelta(idle, prev[base + Int(CPU_STATE_IDLE)])
+                let dNice = tickDelta(nice, prev[base + Int(CPU_STATE_NICE)])
                 let sum = dUser + dSystem + dIdle + dNice
                 let busy = sum > 0 ? (dUser + dSystem + dNice) / sum * 100 : 0
-                perCore.append((busy * 10).rounded() / 10)
+                perCore.append(round1(busy))
                 totalUser += dUser
                 totalSystem += dSystem
                 totalIdle += dIdle
@@ -130,16 +153,7 @@ public enum CPULoadService {
             }
         }
 
-        // Keep a copy for next delta
-        let copyCount = Int(cpuInfoCount)
-        let copy = UnsafeMutablePointer<integer_t>.allocate(capacity: copyCount)
-        copy.initialize(from: info, count: copyCount)
-        if let old = previous {
-            old.deallocate()
-        }
-        previous = copy
-        previousCount = cpuInfoCount
-        previousCoreCount = cpuCount
+        previousTicks = nowTicks
 
         let total = totalUser + totalSystem + totalIdle + totalNice
         let overall = total > 0 ? (totalUser + totalSystem + totalNice) / total * 100 : 0
@@ -147,12 +161,48 @@ public enum CPULoadService {
         let sysPct = total > 0 ? totalSystem / total * 100 : 0
         let idlePct = total > 0 ? totalIdle / total * 100 : 100
 
+        let pCount = sysctlInt("hw.perflevel0.logicalcpu") ?? 0
+        let eCount = sysctlInt("hw.perflevel1.logicalcpu") ?? 0
+        let clusters = clusterAverages(perCore: perCore, pCount: pCount, eCount: eCount)
+
         return CPULoadInfo(
-            overallPercent: (overall * 10).rounded() / 10,
+            overallPercent: round1(overall),
             perCorePercent: perCore,
-            userPercent: (userPct * 10).rounded() / 10,
-            systemPercent: (sysPct * 10).rounded() / 10,
-            idlePercent: (idlePct * 10).rounded() / 10
+            userPercent: round1(userPct),
+            systemPercent: round1(sysPct),
+            idlePercent: round1(idlePct),
+            performancePercent: clusters.p.map(round1),
+            efficiencyPercent: clusters.e.map(round1),
+            performanceCoreCount: pCount,
+            efficiencyCoreCount: eCount
         )
+    }
+
+    /// Apple Silicon lists E-cores first, then P-cores, in `host_processor_info`.
+    private static func clusterAverages(perCore: [Double], pCount: Int, eCount: Int) -> (p: Double?, e: Double?) {
+        guard pCount > 0, eCount > 0, perCore.count == pCount + eCount else {
+            return (nil, nil)
+        }
+        let eSlice = perCore.prefix(eCount)
+        let pSlice = perCore.suffix(pCount)
+        let eAvg = eSlice.reduce(0, +) / Double(eCount)
+        let pAvg = pSlice.reduce(0, +) / Double(pCount)
+        return (pAvg, eAvg)
+    }
+
+    /// 32-bit Mach tick counters wrap; wrapping subtract keeps long-uptime samples valid.
+    private static func tickDelta(_ now: UInt32, _ prev: UInt32) -> Double {
+        Double(now &- prev)
+    }
+
+    private static func round1(_ v: Double) -> Double {
+        (v * 10).rounded() / 10
+    }
+
+    private static func sysctlInt(_ name: String) -> Int? {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname(name, &value, &size, nil, 0) == 0 else { return nil }
+        return Int(value)
     }
 }
