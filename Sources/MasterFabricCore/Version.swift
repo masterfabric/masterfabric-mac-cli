@@ -2,7 +2,7 @@ import Foundation
 
 /// Single source of truth for the product version (keep in sync with root `VERSION`).
 public enum AppVersion {
-    public static let current = "0.4.13"
+    public static let current = "0.4.14"
     public static let repoOwner = "gurkanfikretgunak"
     public static let repoName = "masterfabric-mac-cli"
     public static var repoURL: String { "https://github.com/\(repoOwner)/\(repoName)" }
