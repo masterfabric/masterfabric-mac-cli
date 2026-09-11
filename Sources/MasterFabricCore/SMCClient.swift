@@ -51,6 +51,38 @@ public final class SMCClient: @unchecked Sendable {
         return decode(raw)
     }
 
+    /// Enumerate SMC four-char keys (for discovering temperature sensors per SoC).
+    public func allKeys() -> [String] {
+        guard let count = keyCount() else { return [] }
+        var names: [String] = []
+        names.reserveCapacity(count)
+        for i in 0..<count {
+            if let name = keyName(at: i) {
+                names.append(name)
+            }
+        }
+        return names
+    }
+
+    private func keyCount() -> Int? {
+        guard let n = readNumber("#KEY") else { return nil }
+        return Int(n)
+    }
+
+    private func keyName(at index: Int) -> String? {
+        var input = SMCParamStruct()
+        input.data8 = SMCParamStruct.Selector.getKeyFromIndex.rawValue
+        input.data32 = UInt32(index)
+        var output = SMCParamStruct()
+        do {
+            try invoke(&input, &output)
+        } catch {
+            return nil
+        }
+        guard output.result == SMCParamStruct.Result.success.rawValue else { return nil }
+        return FourChar.toString(output.key).trimmingCharacters(in: .whitespaces)
+    }
+
     public func readUInt8(_ key: String) -> UInt8? {
         guard let raw = try? readRaw(key), !raw.bytes.isEmpty else { return nil }
         return raw.bytes[0]

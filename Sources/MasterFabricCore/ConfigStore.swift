@@ -121,6 +121,9 @@ public enum ConfigStore {
                 case "show_fan_rpm": config.menuBar.showFanRPM = value == "true"
                 case "show_fan_badge": config.menuBar.showFanBadge = value == "true"
                 case "show_battery": config.menuBar.showBattery = value == "true"
+                case "show_memory": config.menuBar.showMemory = value == "true"
+                case "show_short_labels": config.menuBar.showShortLabels = value == "true"
+                case "colorize_heat": config.menuBar.colorizeHeat = value == "true"
                 case "panel_model": config.menuBar.panelModel = value == "true"
                 case "panel_chip": config.menuBar.panelChip = value == "true"
                 case "panel_cpu": config.menuBar.panelCPU = value == "true"
@@ -179,6 +182,9 @@ public enum ConfigStore {
         show_fan_rpm = \(mb.showFanRPM)
         show_fan_badge = \(mb.showFanBadge)
         show_battery = \(mb.showBattery)
+        show_memory = \(mb.showMemory)
+        show_short_labels = \(mb.showShortLabels)
+        colorize_heat = \(mb.colorizeHeat)
         panel_model = \(mb.panelModel)
         panel_chip = \(mb.panelChip)
         panel_cpu = \(mb.panelCPU)

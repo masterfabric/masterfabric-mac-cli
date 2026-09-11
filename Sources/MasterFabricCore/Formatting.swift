@@ -96,44 +96,25 @@ public enum TextFormat {
         _ status: SystemStatus,
         load: CPULoadInfo? = nil,
         battery: BatteryInfo? = nil,
+        memory: MemoryInfo? = nil,
         display: MenuBarDisplayConfig = .default
     ) -> String {
+        let tokens = StatusBarComposer.tokens(
+            status: status,
+            load: load,
+            battery: battery,
+            memory: memory,
+            display: display
+        )
+        let sep: String
         switch display.style {
-        case .tempOnly:
-            if let cpu = status.temperature.cpuCelsius {
-                return String(format: "%.0f°", cpu)
-            }
-            return "—°"
-        case .fanOnly:
-            if let fan = status.fans.first, let rpm = fan.rpm {
-                return "\(Int(rpm))"
-            }
-            return "Fan —"
-        case .standard, .capsule:
-            break
+        case .compact, .stacked, .meters:
+            sep = " "
+        default:
+            sep = " · "
         }
-
-        var parts: [String] = []
-        if display.showCPUTemp {
-            let cpu = status.temperature.cpuCelsius.map { String(format: "%.0f°", $0) } ?? "—"
-            parts.append("CPU \(cpu)")
-        }
-        if display.showGPUTemp, let gpu = status.temperature.gpuCelsius {
-            parts.append(String(format: "GPU %.0f°", gpu))
-        }
-        if display.showLoad, let load {
-            parts.append(String(format: "%.0f%%", load.overallPercent))
-        }
-        if display.showFanRPM, let fan = status.fans.first, let rpm = fan.rpm {
-            parts.append("Fan \(Int(rpm))")
-        }
-        if display.showBattery, let battery, battery.isPresent, let pct = battery.percent {
-            parts.append(String(format: "Bat %.0f%%", pct))
-        }
-        if parts.isEmpty {
-            return "mf"
-        }
-        return parts.joined(separator: " · ")
+        let text = tokens.map(\.text).joined(separator: sep)
+        return text.isEmpty ? "mf" : text
     }
 
     private static func cpuCoresLine(_ info: SystemInfo) -> String {

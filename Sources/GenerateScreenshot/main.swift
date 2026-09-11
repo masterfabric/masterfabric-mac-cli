@@ -472,13 +472,14 @@ private struct StatusStylesShot: View {
     private func styleRow(_ style: MenuBarStatusStyle) -> some View {
         var display = MenuBarDisplayConfig.default
         display.style = style
-        let title = TextFormat.compactStatusBar(
-            status,
+        let image = StatusItemRenderer.make(
+            status: status,
             load: load,
             battery: battery,
-            display: display
+            memory: nil,
+            display: display,
+            isFull: fanIsFull
         )
-        let showBadge = (style == .standard || style == .capsule) && !status.fans.isEmpty
 
         return VStack(alignment: .leading, spacing: 6) {
             Text(style.title)
@@ -486,17 +487,19 @@ private struct StatusStylesShot: View {
             Text(style.subtitle)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            StatusStrip(
-                title: title,
-                showBadge: showBadge,
-                fanIsFull: fanIsFull,
-                capsule: style == .capsule
-            )
-            .padding(10)
+            HStack(spacing: 8) {
+                Text("MF")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.5))
+                Image(nsImage: image)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(Color.black.opacity(0.82))
             )
         }
     }

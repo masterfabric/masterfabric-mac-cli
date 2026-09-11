@@ -133,71 +133,23 @@ struct MasterFabricMenuBarApp: App {
 /// Renders title + A/F pill as a bitmap. SwiftUI backgrounds are stripped from MenuBarExtra labels.
 enum MenuBarStatusIcon {
     static func make(
-        title: String,
-        showBadge: Bool,
+        status: SystemStatus,
+        load: CPULoadInfo,
+        battery: BatteryInfo?,
+        memory: MemoryInfo?,
+        display: MenuBarDisplayConfig,
         isFull: Bool,
-        style: MenuBarStatusStyle = .standard
+        updateAvailable: Bool = false
     ) -> NSImage {
-        let titleFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        let titleAttrs: [NSAttributedString.Key: Any] = [
-            .font: titleFont,
-            .foregroundColor: style == .capsule ? NSColor.white : NSColor.labelColor,
-        ]
-        let titleSize = (title as NSString).size(withAttributes: titleAttrs)
-
-        let badgeLetter = isFull ? "F" : "A"
-        let badgeFont = NSFont.systemFont(ofSize: 9, weight: .bold)
-        let badgeAttrs: [NSAttributedString.Key: Any] = [
-            .font: badgeFont,
-            .foregroundColor: NSColor.white,
-        ]
-        let badgeTextSize = (badgeLetter as NSString).size(withAttributes: badgeAttrs)
-        let badgeH: CGFloat = 13
-        let badgeW: CGFloat = max(14, badgeTextSize.width + 8)
-        let gap: CGFloat = showBadge ? 5 : 0
-        let padX: CGFloat = style == .capsule ? 7 : 1
-        let padY: CGFloat = style == .capsule ? 2 : 0
-        let contentW = titleSize.width + (showBadge ? gap + badgeW : 0)
-        let height: CGFloat = style == .capsule ? 18 : 18
-        let width = ceil(contentW + padX * 2)
-
-        let size = NSSize(width: max(width, 12), height: height + padY * 2)
-        let image = NSImage(size: size, flipped: false) { _ in
-            if style == .capsule {
-                let capsule = NSBezierPath(
-                    roundedRect: NSRect(x: 0, y: 0, width: size.width, height: size.height),
-                    xRadius: size.height / 2,
-                    yRadius: size.height / 2
-                )
-                NSColor(calibratedWhite: 0.22, alpha: 0.92).setFill()
-                capsule.fill()
-            }
-
-            let titleY = (size.height - titleSize.height) / 2
-            (title as NSString).draw(at: NSPoint(x: padX, y: titleY), withAttributes: titleAttrs)
-
-            guard showBadge else { return true }
-
-            let bx = padX + titleSize.width + gap
-            let by = (size.height - badgeH) / 2
-            let fill = isFull
-                ? NSColor(calibratedRed: 0.20, green: 0.48, blue: 0.96, alpha: 1)
-                : NSColor(calibratedRed: 0.18, green: 0.72, blue: 0.36, alpha: 1)
-            let path = NSBezierPath(
-                roundedRect: NSRect(x: bx, y: by, width: badgeW, height: badgeH),
-                xRadius: 4,
-                yRadius: 4
-            )
-            fill.setFill()
-            path.fill()
-
-            let tx = bx + (badgeW - badgeTextSize.width) / 2
-            let ty = by + (badgeH - badgeTextSize.height) / 2 - 0.5
-            (badgeLetter as NSString).draw(at: NSPoint(x: tx, y: ty), withAttributes: badgeAttrs)
-            return true
-        }
-        image.isTemplate = false
-        return image
+        StatusItemRenderer.make(
+            status: status,
+            load: load,
+            battery: battery,
+            memory: memory,
+            display: display,
+            isFull: isFull,
+            updateAvailable: updateAvailable
+        )
     }
 }
 
@@ -597,24 +549,23 @@ final class MenuBarModel: ObservableObject {
             status,
             load: load,
             battery: battery,
+            memory: memory,
             display: mb
         )
         let fansPresent = !status.fans.isEmpty
         fanIsFull = FanService.isFullMode(status.fans)
-        let badge: Bool = {
-            switch mb.style {
-            case .tempOnly, .fanOnly:
-                return false
-            case .standard, .capsule:
-                return mb.showFanBadge && fansPresent
-            }
-        }()
+        let badge = mb.style.allowsFanBadge && mb.showFanBadge && fansPresent
         showFanBadge = badge
+        let updateAvailable = pendingUpdate?.updateAvailable == true
+            && pendingUpdate?.remote != declinedRemoteVersion
         statusItemImage = MenuBarStatusIcon.make(
-            title: title,
-            showBadge: badge,
+            status: status,
+            load: load,
+            battery: battery,
+            memory: memory,
+            display: mb,
             isFull: fanIsFull,
-            style: mb.style
+            updateAvailable: updateAvailable
         )
     }
 
@@ -766,6 +717,7 @@ final class MenuBarModel: ObservableObject {
                 guard let self else { return }
                 self.isCheckingUpdate = false
                 self.pendingUpdate = result
+                self.applyStatusItem()
                 if result.updateAvailable {
                     let remote = result.remote ?? ""
                     let alreadyDeclined = self.declinedRemoteVersion == remote
@@ -924,7 +876,7 @@ struct MenuBarPanel: View {
     }
 
     private var panelWidth: CGFloat {
-        model.showSettings ? 340 : 320
+        model.showSettings ? 360 : 320
     }
 
     private var panelMaxHeight: CGFloat {
@@ -1268,30 +1220,56 @@ struct MenuBarSettingsView: View {
 
                 Divider()
 
-                Text("Status item style")
+                Text("Status item")
                     .font(.subheadline.weight(.semibold))
+                Text("Live preview — also applied to the menu bar while you edit.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
-                VStack(alignment: .leading, spacing: 6) {
+                StatusItemPreviewStrip(
+                    image: MenuBarStatusIcon.make(
+                        status: model.status,
+                        load: model.load,
+                        battery: model.battery,
+                        memory: model.memory,
+                        display: form.draft,
+                        isFull: model.fanIsFull,
+                        updateAvailable: model.pendingUpdate?.updateAvailable == true
+                    ),
+                    caption: form.draft.style.title
+                )
+
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(MenuBarStatusStyle.allCases) { style in
+                        let selected = form.draft.style == style
                         Button {
                             form.draft.style = style
                             preview(form.draft)
                         } label: {
-                            HStack(alignment: .top, spacing: 8) {
-                                Image(systemName: form.draft.style == style ? "largecircle.fill.circle" : "circle")
-                                    .foregroundStyle(form.draft.style == style ? Color.accentColor : .secondary)
-                                VStack(alignment: .leading, spacing: 1) {
+                            HStack(alignment: .center, spacing: 8) {
+                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                                VStack(alignment: .leading, spacing: 3) {
                                     Text(style.title)
                                         .font(.callout.weight(.medium))
                                         .foregroundStyle(.primary)
                                     Text(style.subtitle)
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    StatusItemPreviewStrip(
+                                        image: previewImage(for: style),
+                                        compact: true
+                                    )
                                 }
-                                Spacer(minLength: 0)
                             }
                         }
                         .buttonStyle(.plain)
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(selected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
+                        )
                     }
                 }
 
@@ -1299,16 +1277,29 @@ struct MenuBarSettingsView: View {
 
                 Text("Show in menu bar")
                     .font(.subheadline.weight(.semibold))
-                toggle("CPU temperature", form.draft.showCPUTemp) { form.draft.showCPUTemp = $0; preview(form.draft) }
-                toggle("GPU temperature", form.draft.showGPUTemp) { form.draft.showGPUTemp = $0; preview(form.draft) }
-                toggle("CPU load %", form.draft.showLoad) { form.draft.showLoad = $0; preview(form.draft) }
-                toggle("Fan RPM", form.draft.showFanRPM) { form.draft.showFanRPM = $0; preview(form.draft) }
-                toggle("Fan A/F badge", form.draft.showFanBadge) { form.draft.showFanBadge = $0; preview(form.draft) }
-                toggle("Battery %", form.draft.showBattery) { form.draft.showBattery = $0; preview(form.draft) }
+                Group {
+                    toggle("CPU temperature", form.draft.showCPUTemp) { form.draft.showCPUTemp = $0; preview(form.draft) }
+                    toggle("GPU temperature", form.draft.showGPUTemp) { form.draft.showGPUTemp = $0; preview(form.draft) }
+                    toggle("CPU load %", form.draft.showLoad) { form.draft.showLoad = $0; preview(form.draft) }
+                    toggle("Fan RPM", form.draft.showFanRPM) { form.draft.showFanRPM = $0; preview(form.draft) }
+                    toggle("Fan A/F badge", form.draft.showFanBadge) { form.draft.showFanBadge = $0; preview(form.draft) }
+                    toggle("Battery %", form.draft.showBattery) { form.draft.showBattery = $0; preview(form.draft) }
+                    toggle("Memory %", form.draft.showMemory) { form.draft.showMemory = $0; preview(form.draft) }
+                }
+                .disabled(form.draft.style.ignoresMetricToggles)
 
-                Text("Temp only / Fan only styles ignore most toggles above.")
+                Text("Appearance")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                toggle("Short labels (52° not CPU 52°)", form.draft.showShortLabels) { form.draft.showShortLabels = $0; preview(form.draft) }
+                toggle("Color by heat / load", form.draft.colorizeHeat) { form.draft.colorizeHeat = $0; preview(form.draft) }
+
+                Text(form.draft.style.ignoresMetricToggles
+                     ? "Temp only / Fan only ignore the metric toggles above."
+                     : "Meters add a heat chip + load bar. Stacked uses two lines.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Divider()
 
@@ -1360,6 +1351,20 @@ struct MenuBarSettingsView: View {
         model.applyStatusItem()
     }
 
+    private func previewImage(for style: MenuBarStatusStyle) -> NSImage {
+        var d = form.draft
+        d.style = style
+        return MenuBarStatusIcon.make(
+            status: model.status,
+            load: model.load,
+            battery: model.battery,
+            memory: model.memory,
+            display: d,
+            isFull: model.fanIsFull,
+            updateAvailable: false
+        )
+    }
+
     private func toggle(_ title: String, _ value: Bool, onChange: @escaping (Bool) -> Void) -> some View {
         Toggle(title, isOn: Binding(
             get: { value },
@@ -1368,6 +1373,37 @@ struct MenuBarSettingsView: View {
         .toggleStyle(.switch)
         .controlSize(.small)
         .font(.caption)
+    }
+}
+
+private struct StatusItemPreviewStrip: View {
+    var image: NSImage
+    var caption: String? = nil
+    var compact: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("MF")
+                    .font(.system(size: compact ? 8 : 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.55))
+                Image(nsImage: image)
+                    .interpolation(.high)
+                    .padding(.vertical, compact ? 2 : 4)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, compact ? 4 : 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.black.opacity(0.78))
+            )
+            if let caption {
+                Text("Menu bar · \(caption)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
