@@ -8,8 +8,27 @@ import MasterFabricCore
 // `swift build --product MasterFabricMenuBar` succeeds on CLT-only machines.
 @MainActor
 final class DisplaySettingsFormState: ObservableObject {
+    enum Tab: String, CaseIterable, Identifiable {
+        case look
+        case alerts
+        case integrations
+        case about
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .look: return "Look"
+            case .alerts: return "Alerts"
+            case .integrations: return "Apps"
+            case .about: return "About"
+            }
+        }
+    }
+
     @Published var draft: MenuBarDisplayConfig = .default
     @Published var notifyLocal: Bool = false
+    @Published var tab: Tab = .look
 }
 
 @MainActor
@@ -374,6 +393,7 @@ final class MenuBarModel: ObservableObject {
     @Published var alertEditorSession: Int = 0
 
     @Published var showSettings = false
+    @Published var settingsTab: DisplaySettingsFormState.Tab = .look
 
     /// Measured intrinsic height of the active panel (for MenuBarExtra window sync).
     @Published var panelContentHeight: CGFloat = 0
@@ -570,6 +590,8 @@ final class MenuBarModel: ObservableObject {
     }
 
     func openAdd(kind: IntegrationKind? = nil) {
+        settingsTab = .integrations
+        showSettings = false
         showEditAlert = false
         if let kind {
             editingKind = kind
@@ -583,6 +605,8 @@ final class MenuBarModel: ObservableObject {
     }
 
     func openEditAlert(kind: AlertKind) {
+        settingsTab = .alerts
+        showSettings = false
         showAddIntegration = false
         editingAlertKind = kind
         alertEditorSession &+= 1
@@ -592,6 +616,7 @@ final class MenuBarModel: ObservableObject {
     func closeEditor() {
         showAddIntegration = false
         showEditAlert = false
+        showSettings = true
         var config = ConfigStore.load()
         config.language = "en"
         alertConfig = config.alerts
@@ -1082,21 +1107,13 @@ struct StatusHomeView: View {
                 }
             }
 
-            if d.panelAlerts {
+            if !model.alerts.isEmpty {
                 Divider()
-                AlertsSection(model: model)
-                if !model.alerts.isEmpty {
-                    ForEach(model.alerts, id: \.self) { alert in
-                        Text(alert)
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
+                ForEach(model.alerts, id: \.self) { alert in
+                    Text(alert)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
-            }
-
-            if d.panelIntegrations {
-                Divider()
-                IntegrationsSection(model: model)
             }
 
             if !model.lastNotifyMessage.isEmpty {
@@ -1104,11 +1121,6 @@ struct StatusHomeView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if d.panelAbout {
-                Divider()
-                AboutSection(model: model)
             }
 
             Divider()
@@ -1124,7 +1136,7 @@ struct StatusHomeView: View {
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .buttonStyle(.borderless)
-                .help("Menu bar display settings")
+                .help("Settings")
             }
         }
     }
@@ -1163,10 +1175,12 @@ struct MenuBarSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Menu Bar Settings")
+                    Text("Settings")
                         .font(.headline)
                     Spacer()
                     Button {
+                        model.saveDisplayConfig(form.draft)
+                        model.saveNotifyLocal(form.notifyLocal)
                         model.closeSettings()
                         model.refresh()
                     } label: {
@@ -1176,193 +1190,162 @@ struct MenuBarSettingsView: View {
                     .buttonStyle(.borderless)
                 }
 
-                // MARK: Notifications (top)
-                Text("Notifications")
-                    .font(.subheadline.weight(.semibold))
-                Toggle("Local notifications on alert", isOn: Binding(
-                    get: { form.notifyLocal },
-                    set: { on in
-                        if on {
-                            model.enableLocalNotifications { granted in
-                                form.notifyLocal = granted
-                            }
-                        } else {
-                            form.notifyLocal = false
-                            model.disableLocalNotifications()
-                        }
-                    }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.caption)
-                Text("Off by default. Turning On asks for macOS notification permission.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 12) {
-                    Button("Test notification") {
-                        model.sendTestLocalNotification()
-                    }
-                    .font(.caption)
-                    .buttonStyle(.borderless)
-                    .disabled(!form.notifyLocal)
-                    .help(form.notifyLocal ? "Send a sample Notification Center banner" : "Enable local notifications first")
-
-                    if !form.notifyLocal {
-                        Button("Open Notification Settings…") {
-                            LocalNotificationPermissionUX.openSystemNotificationSettings()
-                        }
-                        .font(.caption)
-                        .buttonStyle(.borderless)
+                Picker("", selection: Binding(
+                    get: { form.tab },
+                    set: { form.tab = $0; model.settingsTab = $0 }
+                )) {
+                    ForEach(DisplaySettingsFormState.Tab.allCases) { tab in
+                        Text(tab.title).tag(tab)
                     }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-                Divider()
+                switch form.tab {
+                case .look:
+                    lookTab
+                case .alerts:
+                    notificationsBlock
+                    Divider()
+                    AlertsSection(model: model)
+                case .integrations:
+                    IntegrationsSection(model: model)
+                case .about:
+                    AboutSection(model: model)
+                }
 
-                Text("Status item")
-                    .font(.subheadline.weight(.semibold))
-                Text("Live preview — also applied to the menu bar while you edit.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                StatusItemPreviewStrip(
-                    image: MenuBarStatusIcon.make(
-                        status: model.status,
-                        load: model.load,
-                        battery: model.battery,
-                        memory: model.memory,
-                        display: form.draft,
-                        isFull: model.fanIsFull,
-                        updateAvailable: model.pendingUpdate?.updateAvailable == true
-                    ),
-                    caption: form.draft.style.title
-                )
-
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(MenuBarStatusStyle.allCases) { style in
-                        let selected = form.draft.style == style
-                        Button {
-                            form.draft.style = style
+                if form.tab == .look {
+                    HStack {
+                        Button("Reset look") {
+                            form.draft = .default
                             preview(form.draft)
-                        } label: {
-                            HStack(alignment: .center, spacing: 8) {
-                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selected ? Color.accentColor : .secondary)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(style.title)
-                                        .font(.callout.weight(.medium))
-                                        .foregroundStyle(.primary)
-                                    Text(style.subtitle)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                    StatusItemPreviewStrip(
-                                        image: previewImage(for: style),
-                                        compact: true
-                                    )
-                                }
-                            }
                         }
-                        .buttonStyle(.plain)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(selected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
-                        )
+                        Spacer()
+                        Button("Done") {
+                            model.saveDisplayConfig(form.draft)
+                            model.saveNotifyLocal(form.notifyLocal)
+                            model.closeSettings()
+                            model.refresh()
+                        }
+                        .keyboardShortcut(.defaultAction)
                     }
-                }
-
-                Divider()
-
-                Text("Show in menu bar")
-                    .font(.subheadline.weight(.semibold))
-                Group {
-                    toggle("CPU temperature", form.draft.showCPUTemp) { form.draft.showCPUTemp = $0; preview(form.draft) }
-                    toggle("GPU temperature", form.draft.showGPUTemp) { form.draft.showGPUTemp = $0; preview(form.draft) }
-                    toggle("CPU load %", form.draft.showLoad) { form.draft.showLoad = $0; preview(form.draft) }
-                    toggle("Fan RPM", form.draft.showFanRPM) { form.draft.showFanRPM = $0; preview(form.draft) }
-                    toggle("Fan A/F badge", form.draft.showFanBadge) { form.draft.showFanBadge = $0; preview(form.draft) }
-                    toggle("Battery %", form.draft.showBattery) { form.draft.showBattery = $0; preview(form.draft) }
-                    toggle("Memory %", form.draft.showMemory) { form.draft.showMemory = $0; preview(form.draft) }
-                }
-                .disabled(form.draft.style.ignoresMetricToggles)
-
-                Text("Appearance")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                toggle("Short labels (52° not CPU 52°)", form.draft.showShortLabels) { form.draft.showShortLabels = $0; preview(form.draft) }
-                toggle("Color by heat / load", form.draft.colorizeHeat) { form.draft.colorizeHeat = $0; preview(form.draft) }
-
-                Text(form.draft.style.ignoresMetricToggles
-                     ? "Temp only / Fan only ignore the metric toggles above."
-                     : "Meters add a heat chip + load bar. Stacked uses two lines.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Divider()
-
-                Text("Show in panel")
-                    .font(.subheadline.weight(.semibold))
-
-                Group {
-                    toggle("Model", form.draft.panelModel) { form.draft.panelModel = $0 }
-                    toggle("Chip", form.draft.panelChip) { form.draft.panelChip = $0 }
-                    toggle("CPU", form.draft.panelCPU) { form.draft.panelCPU = $0 }
-                    toggle("GPU", form.draft.panelGPU) { form.draft.panelGPU = $0 }
-                    toggle("Load", form.draft.panelLoad) { form.draft.panelLoad = $0 }
-                    toggle("Thermal", form.draft.panelThermal) { form.draft.panelThermal = $0 }
-                    toggle("Fans", form.draft.panelFans) { form.draft.panelFans = $0 }
-                    toggle("Fan control", form.draft.panelFanControl) { form.draft.panelFanControl = $0 }
-                    toggle("Battery", form.draft.panelBattery) { form.draft.panelBattery = $0 }
-                    toggle("Memory", form.draft.panelMemory) { form.draft.panelMemory = $0 }
-                    toggle("CPU history", form.draft.panelCPUHist) { form.draft.panelCPUHist = $0 }
-                    toggle("Alerts", form.draft.panelAlerts) { form.draft.panelAlerts = $0 }
-                    toggle("Integrations", form.draft.panelIntegrations) { form.draft.panelIntegrations = $0 }
-                    toggle("About", form.draft.panelAbout) { form.draft.panelAbout = $0 }
-                }
-
-                HStack {
-                    Button("Reset") {
-                        form.draft = .default
-                        form.notifyLocal = false
-                        preview(form.draft)
-                    }
-                    Spacer()
-                    Button("Done") {
-                        model.saveDisplayConfig(form.draft)
-                        model.saveNotifyLocal(form.notifyLocal)
-                        model.closeSettings()
-                        model.refresh()
-                    }
-                    .keyboardShortcut(.defaultAction)
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             form.draft = model.displayConfig
             form.notifyLocal = model.alertConfig.notifyLocal
+            form.tab = model.settingsTab
+        }
+    }
+
+    @ViewBuilder
+    private var notificationsBlock: some View {
+        Text("Notifications")
+            .font(.subheadline.weight(.semibold))
+        Toggle("Local notifications on alert", isOn: Binding(
+            get: { form.notifyLocal },
+            set: { on in
+                if on {
+                    model.enableLocalNotifications { granted in
+                        form.notifyLocal = granted
+                    }
+                } else {
+                    form.notifyLocal = false
+                    model.disableLocalNotifications()
+                }
+            }
+        ))
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .font(.caption)
+        HStack(spacing: 12) {
+            Button("Test notification") {
+                model.sendTestLocalNotification()
+            }
+            .font(.caption)
+            .buttonStyle(.borderless)
+            .disabled(!form.notifyLocal)
+            if !form.notifyLocal {
+                Button("Open Notification Settings…") {
+                    LocalNotificationPermissionUX.openSystemNotificationSettings()
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var lookTab: some View {
+        Text("Status item")
+            .font(.subheadline.weight(.semibold))
+        Text("Pick a style. The strip below is the live menu bar.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+        StatusItemPreviewStrip(
+            image: MenuBarStatusIcon.make(
+                status: model.status,
+                load: model.load,
+                battery: model.battery,
+                memory: model.memory,
+                display: form.draft,
+                isFull: model.fanIsFull,
+                updateAvailable: model.pendingUpdate?.updateAvailable == true
+            ),
+            caption: form.draft.style.title
+        )
+
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], spacing: 6) {
+            ForEach(MenuBarStatusStyle.allCases) { style in
+                let selected = form.draft.style == style
+                Button {
+                    form.draft.style = style
+                    preview(form.draft)
+                } label: {
+                    Text(style.title)
+                        .font(.caption.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(selected ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.06))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(selected ? Color.accentColor : Color.clear, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(style.subtitle)
+            }
+        }
+
+        Text(form.draft.style.subtitle)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+        if !form.draft.style.ignoresMetricToggles {
+            Text("On the status item")
+                .font(.subheadline.weight(.semibold))
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 4) {
+                toggle("CPU °C", form.draft.showCPUTemp) { form.draft.showCPUTemp = $0; preview(form.draft) }
+                toggle("GPU °C", form.draft.showGPUTemp) { form.draft.showGPUTemp = $0; preview(form.draft) }
+                toggle("Load %", form.draft.showLoad) { form.draft.showLoad = $0; preview(form.draft) }
+                toggle("Fan RPM", form.draft.showFanRPM) { form.draft.showFanRPM = $0; preview(form.draft) }
+                toggle("A/F badge", form.draft.showFanBadge) { form.draft.showFanBadge = $0; preview(form.draft) }
+                toggle("Battery", form.draft.showBattery) { form.draft.showBattery = $0; preview(form.draft) }
+                toggle("Memory", form.draft.showMemory) { form.draft.showMemory = $0; preview(form.draft) }
+                toggle("Short labels", form.draft.showShortLabels) { form.draft.showShortLabels = $0; preview(form.draft) }
+                toggle("Heat color", form.draft.colorizeHeat) { form.draft.colorizeHeat = $0; preview(form.draft) }
+            }
         }
     }
 
     private func preview(_ config: MenuBarDisplayConfig) {
         model.displayConfig = config
         model.applyStatusItem()
-    }
-
-    private func previewImage(for style: MenuBarStatusStyle) -> NSImage {
-        var d = form.draft
-        d.style = style
-        return MenuBarStatusIcon.make(
-            status: model.status,
-            load: model.load,
-            battery: model.battery,
-            memory: model.memory,
-            display: d,
-            isFull: model.fanIsFull,
-            updateAvailable: false
-        )
     }
 
     private func toggle(_ title: String, _ value: Bool, onChange: @escaping (Bool) -> Void) -> some View {
