@@ -336,27 +336,51 @@ public struct AppConfig: Sendable, Codable, Equatable {
 /// How the menu bar status item text is composed / drawn.
 public enum MenuBarStatusStyle: String, CaseIterable, Codable, Sendable, Identifiable {
     case standard = "standard"
+    case compact = "compact"
+    case stacked = "stacked"
+    case meters = "meters"
+    case capsule = "capsule"
     case tempOnly = "temp"
     case fanOnly = "fan"
-    case capsule = "capsule"
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
         case .standard: return "Standard"
+        case .compact: return "Compact"
+        case .stacked: return "Stacked"
+        case .meters: return "Meters"
+        case .capsule: return "Capsule"
         case .tempOnly: return "Temp only"
         case .fanOnly: return "Fan only"
-        case .capsule: return "Capsule"
         }
     }
 
     public var subtitle: String {
         switch self {
-        case .standard: return "CPU · load · fan + A/F badge"
-        case .tempOnly: return "Just temperature, e.g. 52°"
-        case .fanOnly: return "Just fan RPM, e.g. 2400"
-        case .capsule: return "Pill background + metrics + badge"
+        case .standard: return "Labeled metrics + A/F badge"
+        case .compact: return "Short values, less chrome"
+        case .stacked: return "Two lines — temp over load/fan"
+        case .meters: return "Heat + load bars beside values"
+        case .capsule: return "Pill background, tinted by heat"
+        case .tempOnly: return "Large temperature only"
+        case .fanOnly: return "Fan RPM only"
+        }
+    }
+
+    /// Temp-only / fan-only ignore the metric toggles.
+    public var ignoresMetricToggles: Bool {
+        switch self {
+        case .tempOnly, .fanOnly: return true
+        default: return false
+        }
+    }
+
+    public var allowsFanBadge: Bool {
+        switch self {
+        case .tempOnly, .fanOnly: return false
+        default: return true
         }
     }
 }
@@ -372,6 +396,11 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
     public var showFanRPM: Bool
     public var showFanBadge: Bool
     public var showBattery: Bool
+    public var showMemory: Bool
+    /// Drop "CPU" / "Fan" prefixes (52° instead of CPU 52°).
+    public var showShortLabels: Bool
+    /// Color temperature / load by heat and utilization.
+    public var colorizeHeat: Bool
 
     // Dropdown panel sections
     public var panelModel: Bool
@@ -397,6 +426,9 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         showFanRPM: true,
         showFanBadge: true,
         showBattery: false,
+        showMemory: false,
+        showShortLabels: false,
+        colorizeHeat: true,
         panelModel: true,
         panelChip: true,
         panelCPU: true,
@@ -421,6 +453,9 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         showFanRPM: Bool,
         showFanBadge: Bool,
         showBattery: Bool,
+        showMemory: Bool = false,
+        showShortLabels: Bool = false,
+        colorizeHeat: Bool = true,
         panelModel: Bool,
         panelChip: Bool,
         panelCPU: Bool,
@@ -443,6 +478,9 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         self.showFanRPM = showFanRPM
         self.showFanBadge = showFanBadge
         self.showBattery = showBattery
+        self.showMemory = showMemory
+        self.showShortLabels = showShortLabels
+        self.colorizeHeat = colorizeHeat
         self.panelModel = panelModel
         self.panelChip = panelChip
         self.panelCPU = panelCPU

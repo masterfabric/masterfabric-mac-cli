@@ -1,62 +1,103 @@
 import Foundation
 
 public enum ThermalService {
-    /// Known SMC temperature keys (Apple Silicon + Intel best-effort).
+    /// Fallback SMC keys when discovery finds nothing (Apple Silicon + Intel).
     private static let cpuKeys = [
-        "Tp09", "Tp0T", "Tp0G", "Tp1H", "Tp05", "Tp01", "Tp00",
+        "Te05", "Te0S", "Te09", "Te0H", "Te0L", "Te0P",
+        "Tp01", "Tp05", "Tp09", "Tp0D", "Tp0V", "Tp0Y", "Tp0b", "Tp0e",
+        "Tp0G", "Tp0T", "Tp0H", "Tp0L", "Tp0P", "Tp0X",
+        "Tf04", "Tf09", "Tf0A", "Tf0B", "Tf0D", "Tf0E",
+        "Tf44", "Tf49", "Tf4A", "Tf4B", "Tf4D", "Tf4E",
         "TC0P", "TC0E", "TC0F", "TCAD", "TC0H", "TC0c", "TC0C",
     ]
     private static let gpuKeys = [
         "Tg0D", "Tg0L", "Tg0P", "Tg05", "Tg0H", "Tg1H",
+        "Tg0G", "Tg0K", "Tg0d", "Tg0e", "Tg0j", "Tg0k",
+        "Tg1U", "Tg1k",
         "TG0P", "TGDD", "TG0D", "TCGC", "Tg0F",
     ]
 
+    private static let cacheLock = NSLock()
+    private static var cachedCPUKeys: [String]?
+    private static var cachedGPUKeys: [String]?
+
     public static func read() -> TemperatureReading {
         var sensors: [String: Double] = [:]
-        var cpu: Double?
-        var gpu: Double?
 
         let hid = HIDThermalReader.readSensors()
-        for (name, value) in hid {
+        for (name, value) in hid where isPlausibleDieTemp(value) {
             sensors[name] = round1(value)
         }
 
         if let smc = try? SMCClient() {
-            for key in cpuKeys {
-                if let v = smc.readNumber(key), v > 0, v < 120 {
+            let keys = resolvedKeys(smc)
+            for key in keys.cpu {
+                if let v = smc.readNumber(key), isPlausibleDieTemp(v) {
                     sensors["SMC:\(key)"] = round1(v)
-                    if cpu == nil { cpu = round1(v) }
                 }
             }
-            for key in gpuKeys {
-                if let v = smc.readNumber(key), v > 0, v < 120 {
+            for key in keys.gpu {
+                if let v = smc.readNumber(key), isPlausibleDieTemp(v) {
                     sensors["SMC:\(key)"] = round1(v)
-                    if gpu == nil { gpu = round1(v) }
                 }
             }
         }
 
-        if cpu == nil {
-            cpu = pick(from: sensors, matching: ["cpu", "soc", "p-core", "e-core", "ane", "mtr"])
-        }
-        if gpu == nil {
-            gpu = pick(from: sensors, matching: ["gpu", "graphics"])
-        }
+        var cpu = pickSMC(from: sensors, prefixes: ["SMC:Tp", "SMC:Te", "SMC:Tf"])
+            ?? pick(from: sensors, matching: ["cpu", "soc", "p-core", "e-core", "ane", "mtr", "die", "package"])
+        let gpu = pickSMC(from: sensors, prefixes: ["SMC:Tg", "SMC:TG"])
+            ?? pick(from: sensors, matching: ["gpu", "graphics"])
 
-        // Prefer DIE / package style names from HID product strings used on AS
-        if cpu == nil {
-            cpu = pick(from: sensors, matching: ["thermal", "die", "package", "avg"])
-        }
-        if cpu == nil, let maxSensor = sensors.values.filter({ $0 > 20 && $0 < 110 }).max() {
-            cpu = maxSensor
+        if let gpuVal = gpu, let cpuVal = cpu, cpuVal + 15 < gpuVal {
+            cpu = pickSMC(from: sensors, prefixes: ["SMC:Tp", "SMC:Te", "SMC:Tf"]) ?? gpu
         }
 
         return TemperatureReading(cpuCelsius: cpu, gpuCelsius: gpu, sensors: sensors)
     }
 
+    /// Idle SoC is typically mid-30s+. 2–10°C on M-series is an unused/delta SMC channel.
+    private static func isPlausibleDieTemp(_ v: Double) -> Bool {
+        v.isFinite && v >= 25 && v < 115
+    }
+
+    private static func resolvedKeys(_ smc: SMCClient) -> (cpu: [String], gpu: [String]) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cpu = cachedCPUKeys, let gpu = cachedGPUKeys {
+            return (cpu, gpu)
+        }
+
+        var cpu: [String] = []
+        var gpu: [String] = []
+        for key in smc.allKeys() {
+            if key.hasPrefix("Te") || key.hasPrefix("Tp") || key.hasPrefix("Tf") {
+                if let v = smc.readNumber(key), isPlausibleDieTemp(v) {
+                    cpu.append(key)
+                }
+            } else if key.hasPrefix("Tg") {
+                if let v = smc.readNumber(key), isPlausibleDieTemp(v) {
+                    gpu.append(key)
+                }
+            }
+        }
+        if cpu.isEmpty { cpu = cpuKeys }
+        if gpu.isEmpty { gpu = gpuKeys }
+        cachedCPUKeys = cpu
+        cachedGPUKeys = gpu
+        return (cpu, gpu)
+    }
+
+    private static func pickSMC(from sensors: [String: Double], prefixes: [String]) -> Double? {
+        let matches = sensors.filter { key, value in
+            guard isPlausibleDieTemp(value) else { return false }
+            return prefixes.contains { key.hasPrefix($0) }
+        }
+        return matches.values.max().map(round1)
+    }
+
     private static func pick(from sensors: [String: Double], matching needles: [String]) -> Double? {
         let matches = sensors.filter { key, value in
-            guard value > 15, value < 120 else { return false }
+            guard isPlausibleDieTemp(value) else { return false }
             let lower = key.lowercased()
             return needles.contains { lower.contains($0) }
         }

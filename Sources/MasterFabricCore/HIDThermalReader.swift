@@ -54,7 +54,7 @@ enum HIDThermalReader {
     private static func temperature(from service: AnyObject) -> (String, Double)? {
         guard let event = copyEvent(service, type: 15) else { return nil }
         let value = floatValue(event, field: 15 << 16)
-        guard value.isFinite, value > 0, value < 150 else { return nil }
+        guard value.isFinite, value >= 25, value < 150 else { return nil }
 
         let product = (copyProperty(service, "Product") as? String)
             ?? (copyProperty(service, "ProductName") as? String)

@@ -22,6 +22,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("IOKit"),
                 .linkedFramework("UserNotifications"),
+                .linkedFramework("AppKit"),
             ]
         ),
         .executableTarget(
