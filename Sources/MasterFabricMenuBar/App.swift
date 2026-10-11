@@ -362,6 +362,41 @@ enum AlertKind: String, CaseIterable, Identifiable {
     }
 }
 
+/// Cancel flag for a Make room run. Touched from the UI and the background loop.
+final class MakeRoomRun: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var target: UInt64
+
+    init(target: UInt64) {
+        self.target = target
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    func isCancelled() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func updateTarget(_ bytes: UInt64) {
+        lock.lock()
+        target = bytes
+        lock.unlock()
+    }
+
+    func targetBytes() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return target
+    }
+}
+
 @MainActor
 final class MenuBarModel: ObservableObject {
     @Published var title: String = "mf…"
@@ -373,6 +408,12 @@ final class MenuBarModel: ObservableObject {
     @Published var info: SystemInfo = SystemInfoService.current()
     @Published var battery: BatteryInfo = BatteryService.current()
     @Published var memory: MemoryInfo = MemoryService.current()
+    @Published var showMemoryRoom = false
+    @Published var memoryRoom: MemoryRoom = .empty
+    @Published var releasingPID: Int32 = 0
+    @Published var isMakingRoom = false
+    @Published var memoryRoomMessage: String = ""
+    @Published var memoryTrend: [MemoryTrendSample] = []
     @Published var disk: DiskInfo = DiskService.current()
     @Published var load: CPULoadInfo = CPULoadService.current()
     @Published var power: PowerInfo = PowerService.current()
@@ -406,8 +447,12 @@ final class MenuBarModel: ObservableObject {
     @Published var isUpdating = false
 
     private var timer: Timer?
+    private var trendTimer: Timer?
     private var updateCheckTimer: Timer?
     private var notifiedRemoteVersion: String?
+    private var memoryRoomGeneration = 0
+    private var makeRoomGeneration = 0
+    private var makeRoomRun: MakeRoomRun?
 
     init() {
         refreshMetrics()
@@ -418,6 +463,14 @@ final class MenuBarModel: ObservableObject {
                 self?.refreshMetrics()
             }
         }
+        let trend = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.recordMemoryTrend()
+            }
+        }
+        RunLoop.main.add(trend, forMode: .common)
+        trendTimer = trend
+        recordMemoryTrend()
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             self?.checkForUpdates(promptIfAvailable: true)
         }
@@ -438,6 +491,157 @@ final class MenuBarModel: ObservableObject {
         showAddIntegration = false
         showEditAlert = false
         showUpdateDialog = false
+        showMemoryRoom = false
+    }
+
+    func openMemoryRoom() {
+        showSettings = false
+        showAddIntegration = false
+        showEditAlert = false
+        showUpdateDialog = false
+        memoryRoomMessage = ""
+        showMemoryRoom = true
+        beginMakeRoomIfShort()
+        if !isMakingRoom {
+            refreshMemoryRoom()
+        }
+    }
+
+    func recordMemoryTrend() {
+        let head = MemoryRoomService.headroom()
+        MemoryTrendStore.record(availableBytes: head.availableBytes, usedPercent: head.memory.usedPercent)
+        memoryTrend = MemoryTrendStore.snapshot()
+        memory = head.memory
+        if showMemoryRoom {
+            memoryRoom.memory = head.memory
+            memoryRoom.availableBytes = head.availableBytes
+        }
+    }
+
+    func setModelRoomTargetGB(_ gigabytes: Double) {
+        let physical = memory.totalBytes > 0
+            ? Double(memory.totalBytes) / MemoryRoomService.gib
+            : 32
+        let cap = max(1, min(32, floor(physical)))
+        var config = displayConfig
+        config.modelRoomTargetGB = min(max(1, gigabytes.rounded()), cap)
+        displayConfig = config
+        var full = ConfigStore.load()
+        full.menuBar = config
+        try? ConfigStore.save(full)
+        if showMemoryRoom {
+            let target = MemoryRoomService.targetBytes(gigabytes: config.modelRoomTargetGB)
+            if let run = makeRoomRun, isMakingRoom {
+                run.updateTarget(target)
+                memoryRoomMessage = "Making \(TextFormat.bytes(target))…"
+            } else {
+                beginMakeRoomIfShort()
+            }
+        }
+    }
+
+    /// Selecting a target above the current room starts freeing apps until that much is allocatable.
+    func beginMakeRoomIfShort() {
+        let head = MemoryRoomService.headroom()
+        let target = MemoryRoomService.targetBytes(gigabytes: displayConfig.modelRoomTargetGB)
+        if head.availableBytes >= target {
+            if isMakingRoom {
+                stopMakingRoom()
+                memoryRoomMessage = "Room reached \(TextFormat.bytes(head.availableBytes))."
+            }
+            return
+        }
+        guard showMemoryRoom, !isMakingRoom else { return }
+        toggleMakeRoom()
+    }
+
+    func closeMemoryRoom() {
+        stopMakingRoom()
+        showMemoryRoom = false
+        releasingPID = 0
+        memoryRoomGeneration += 1
+    }
+
+    func toggleMakeRoom() {
+        if isMakingRoom {
+            stopMakingRoom()
+            memoryRoomMessage = "Stopped. Room is \(TextFormat.bytes(memoryRoom.availableBytes))."
+            return
+        }
+        isMakingRoom = true
+        makeRoomGeneration += 1
+        let generation = makeRoomGeneration
+        let target = MemoryRoomService.targetBytes(gigabytes: displayConfig.modelRoomTargetGB)
+        let run = MakeRoomRun(target: target)
+        makeRoomRun = run
+        memoryRoomMessage = "Making \(TextFormat.bytes(target))…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            MemoryRoomService.makeRoom(targetBytes: { run.targetBytes() }, shouldStop: { run.isCancelled() }) { step in
+                DispatchQueue.main.async {
+                    guard let self, self.makeRoomGeneration == generation else { return }
+                    self.recordMemoryTrend()
+                    self.memoryRoom.availableBytes = step.availableBytes
+                    self.memoryRoomMessage = step.detail
+                    self.applyStatusItem()
+                    if step.done {
+                        self.isMakingRoom = false
+                        self.releasingPID = 0
+                        self.refreshMemoryRoom()
+                    }
+                }
+            }
+        }
+    }
+
+    private func stopMakingRoom() {
+        makeRoomRun?.cancel()
+        makeRoomRun = nil
+        isMakingRoom = false
+        makeRoomGeneration += 1
+        releasingPID = 0
+    }
+
+    func refreshMemoryRoom() {
+        guard showMemoryRoom, releasingPID == 0, !isMakingRoom else { return }
+        memoryRoomGeneration += 1
+        let generation = memoryRoomGeneration
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let room = MemoryRoomService.snapshot(limit: MemoryRoomService.panelLimit)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard self.showMemoryRoom, self.releasingPID == 0, self.memoryRoomGeneration == generation else { return }
+                self.memoryRoom = room
+                self.memory = room.memory
+                self.applyStatusItem()
+            }
+        }
+    }
+
+    func releaseMemory(pid: Int32) {
+        guard releasingPID == 0, !isMakingRoom else { return }
+        let name = memoryRoom.consumers.first { $0.pid == pid }?.name ?? "pid \(pid)"
+        releasingPID = pid
+        memoryRoomGeneration += 1
+        let generation = memoryRoomGeneration
+        memoryRoomMessage = "Quitting \(name)…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = MemoryRoomService.release(pid: pid, force: false)
+            Thread.sleep(forTimeInterval: 0.45)
+            let room = MemoryRoomService.snapshot(limit: MemoryRoomService.panelLimit)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard self.memoryRoomGeneration == generation else { return }
+                self.releasingPID = 0
+                self.memoryRoom = room
+                self.memory = room.memory
+                if result.ok, room.consumers.contains(where: { $0.pid == pid }) {
+                    self.memoryRoomMessage = "\(result.detail) Still in the list — it may be shutting down. If it stays, run mf memory free --pid \(pid) --force."
+                } else {
+                    self.memoryRoomMessage = result.detail
+                }
+                self.applyStatusItem()
+            }
+        }
     }
 
     func closeSettings() {
@@ -517,10 +721,14 @@ final class MenuBarModel: ObservableObject {
     }
 
     private var isEditingInline: Bool {
-        showAddIntegration || showEditAlert || showUpdateDialog || showSettings
+        showAddIntegration || showEditAlert || showUpdateDialog || showSettings || showMemoryRoom
     }
 
     private func refreshMetrics() {
+        if showMemoryRoom {
+            refreshMemoryRoom()
+            return
+        }
         // Don't stomp the inline editor while the user is configuring.
         guard !isEditingInline else { return }
 
@@ -592,6 +800,7 @@ final class MenuBarModel: ObservableObject {
     func openAdd(kind: IntegrationKind? = nil) {
         settingsTab = .integrations
         showSettings = false
+        showMemoryRoom = false
         showEditAlert = false
         if let kind {
             editingKind = kind
@@ -607,6 +816,7 @@ final class MenuBarModel: ObservableObject {
     func openEditAlert(kind: AlertKind) {
         settingsTab = .alerts
         showSettings = false
+        showMemoryRoom = false
         showAddIntegration = false
         editingAlertKind = kind
         alertEditorSession &+= 1
@@ -751,6 +961,7 @@ final class MenuBarModel: ObservableObject {
                         self.showAddIntegration = false
                         self.showEditAlert = false
                         self.showSettings = false
+                        self.showMemoryRoom = false
                         self.showUpdateDialog = true
                     }
                     if !alreadyDeclined, self.notifiedRemoteVersion != remote {
@@ -877,6 +1088,8 @@ struct MenuBarPanel: View {
     private var panelContent: some View {
         if model.showUpdateDialog {
             UpdatePromptView(model: model)
+        } else if model.showMemoryRoom {
+            MemoryRoomView(model: model)
         } else if model.showSettings {
             MenuBarSettingsView(model: model)
         } else if model.showEditAlert {
@@ -897,11 +1110,11 @@ struct MenuBarPanel: View {
     }
 
     private var needsScroll: Bool {
-        model.showSettings || model.showAddIntegration || model.showEditAlert
+        model.showSettings || model.showAddIntegration || model.showEditAlert || model.showMemoryRoom
     }
 
     private var panelWidth: CGFloat {
-        model.showSettings ? 360 : 320
+        (model.showSettings || model.showMemoryRoom) ? 360 : 320
     }
 
     private var panelMaxHeight: CGFloat {
@@ -911,6 +1124,7 @@ struct MenuBarPanel: View {
 
     private var panelModeID: String {
         if model.showUpdateDialog { return "update" }
+        if model.showMemoryRoom { return "memory" }
         if model.showSettings { return "settings" }
         if model.showEditAlert { return "alert-\(model.alertEditorSession)" }
         if model.showAddIntegration { return "add-\(model.editorSession)" }
@@ -1000,6 +1214,14 @@ struct StatusHomeView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
+                Button {
+                    model.openMemoryRoom()
+                } label: {
+                    Image(systemName: "memorychip")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.borderless)
+                .help("RAM room — free memory for a model")
                 Button {
                     model.refresh()
                 } label: {
@@ -1100,7 +1322,21 @@ struct StatusHomeView: View {
                     row("Battery", model.battery.percent.map { String(format: "%.0f%%", $0) } ?? "N/A")
                 }
                 if d.panelMemory {
-                    row("Memory", String(format: "%.0f%% · %@", model.memory.usedPercent, model.memory.pressure))
+                    Button {
+                        model.openMemoryRoom()
+                    } label: {
+                        HStack {
+                            Text("Memory").foregroundStyle(.secondary)
+                            Spacer()
+                            Text(String(format: "%.0f%% · %@", model.memory.usedPercent, model.memory.pressure))
+                                .font(.body.monospacedDigit())
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open RAM room")
                 }
                 if d.panelCPUHist {
                     row("CPU hist", model.history.cpuSparkline)
@@ -1341,6 +1577,21 @@ struct MenuBarSettingsView: View {
                 toggle("Heat color", form.draft.colorizeHeat) { form.draft.colorizeHeat = $0; preview(form.draft) }
             }
         }
+
+        Text("RAM room")
+            .font(.subheadline.weight(.semibold))
+        Text("Allocatable RAM to free for a model. The RAM screen graphs the last 60 seconds against this target.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        Stepper(value: Binding(
+            get: { form.draft.modelRoomTargetGB },
+            set: { form.draft.modelRoomTargetGB = min(32, max(1, $0)) }
+        ), in: 1...32, step: 1) {
+            Text("Target \(Int(form.draft.modelRoomTargetGB.rounded())) GB")
+                .font(.caption.monospacedDigit())
+        }
+        .controlSize(.small)
     }
 
     private func preview(_ config: MenuBarDisplayConfig) {

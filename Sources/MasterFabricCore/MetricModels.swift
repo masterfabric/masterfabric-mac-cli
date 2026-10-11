@@ -177,6 +177,97 @@ public struct ProcessCPUInfo: Sendable, Codable, Equatable {
     }
 }
 
+/// One process row in the RAM room. `role` is `app`, `model`, or `system`.
+public struct MemoryConsumer: Sendable, Codable, Equatable {
+    public var pid: Int32
+    public var name: String
+    public var memoryBytes: UInt64
+    public var cpuPercent: Double
+    public var role: String
+    public var releasable: Bool
+    public var note: String
+
+    public init(
+        pid: Int32,
+        name: String,
+        memoryBytes: UInt64,
+        cpuPercent: Double,
+        role: String,
+        releasable: Bool,
+        note: String
+    ) {
+        self.pid = pid
+        self.name = name
+        self.memoryBytes = memoryBytes
+        self.cpuPercent = cpuPercent
+        self.role = role
+        self.releasable = releasable
+        self.note = note
+    }
+}
+
+/// RAM snapshot plus the processes that can be quit one at a time to leave room for a model.
+public struct MemoryRoom: Sendable, Codable, Equatable {
+    public var memory: MemoryInfo
+    /// Bytes `os_proc_available_memory` says a new allocation can still take.
+    public var availableBytes: UInt64
+    /// Sum of RSS for every releasable process, including ones outside `consumers`.
+    public var quittableBytes: UInt64
+    public var consumers: [MemoryConsumer]
+
+    public init(
+        memory: MemoryInfo,
+        availableBytes: UInt64,
+        quittableBytes: UInt64,
+        consumers: [MemoryConsumer]
+    ) {
+        self.memory = memory
+        self.availableBytes = availableBytes
+        self.quittableBytes = quittableBytes
+        self.consumers = consumers
+    }
+
+    public static let empty = MemoryRoom(
+        memory: MemoryInfo(
+            totalBytes: 0,
+            usedBytes: 0,
+            freeBytes: 0,
+            wiredBytes: 0,
+            compressedBytes: 0,
+            swapUsedBytes: 0,
+            pressure: "unknown"
+        ),
+        availableBytes: 0,
+        quittableBytes: 0,
+        consumers: []
+    )
+}
+
+public struct MemoryReleaseResult: Sendable, Codable, Equatable {
+    public var ok: Bool
+    public var pid: Int32
+    public var name: String
+    public var memoryBytes: UInt64
+    public var signal: String
+    public var detail: String
+
+    public init(
+        ok: Bool,
+        pid: Int32,
+        name: String,
+        memoryBytes: UInt64,
+        signal: String,
+        detail: String
+    ) {
+        self.ok = ok
+        self.pid = pid
+        self.name = name
+        self.memoryBytes = memoryBytes
+        self.signal = signal
+        self.detail = detail
+    }
+}
+
 public struct HistorySample: Sendable, Codable, Equatable {
     public var timestamp: Date
     public var cpuCelsius: Double?
@@ -417,6 +508,8 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
     public var panelAlerts: Bool
     public var panelIntegrations: Bool
     public var panelAbout: Bool
+    /// Allocatable RAM the RAM room should reach so a model has room to load.
+    public var modelRoomTargetGB: Double
 
     public static let `default` = MenuBarDisplayConfig(
         style: .standard,
@@ -442,7 +535,8 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         panelCPUHist: true,
         panelAlerts: true,
         panelIntegrations: true,
-        panelAbout: true
+        panelAbout: true,
+        modelRoomTargetGB: 8
     )
 
     public init(
@@ -469,7 +563,8 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         panelCPUHist: Bool,
         panelAlerts: Bool,
         panelIntegrations: Bool,
-        panelAbout: Bool
+        panelAbout: Bool,
+        modelRoomTargetGB: Double = 8
     ) {
         self.style = style
         self.showCPUTemp = showCPUTemp
@@ -495,5 +590,6 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         self.panelAlerts = panelAlerts
         self.panelIntegrations = panelIntegrations
         self.panelAbout = panelAbout
+        self.modelRoomTargetGB = modelRoomTargetGB
     }
 }

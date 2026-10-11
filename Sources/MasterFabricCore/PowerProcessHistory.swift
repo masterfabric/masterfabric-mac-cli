@@ -20,11 +20,24 @@ public enum PowerService {
 
 public enum ProcessService {
     public static func top(limit: Int = 10) -> [ProcessCPUInfo] {
-        let samples = samplePS()
-        let sorted = samples.values.sorted { $0.cpu > $1.cpu }
-        return Array(sorted.prefix(max(1, limit))).map {
-            ProcessCPUInfo(pid: $0.pid, name: $0.name, cpuPercent: $0.cpu, memoryBytes: $0.mem)
-        }
+        let sorted = samplePS().values.sorted { $0.cpu > $1.cpu }
+        return Array(sorted.prefix(max(1, limit))).map(info(from:))
+    }
+
+    /// Largest resident sets. Skips the short-lived `ps` helper used to sample.
+    public static func byMemory(limit: Int = 20) -> [ProcessCPUInfo] {
+        let sorted = samplePS().values
+            .filter { $0.name != "ps" && $0.mem > 0 }
+            .sorted { $0.mem > $1.mem }
+        return Array(sorted.prefix(max(1, limit))).map(info(from:))
+    }
+
+    public static func lookup(pid: Int32) -> ProcessCPUInfo? {
+        samplePS()[pid].map(info(from:))
+    }
+
+    private static func info(from sample: Sample) -> ProcessCPUInfo {
+        ProcessCPUInfo(pid: sample.pid, name: sample.name, cpuPercent: sample.cpu, memoryBytes: sample.mem)
     }
 
     private struct Sample {
@@ -40,14 +53,16 @@ public enum ProcessService {
         p.arguments = ["-Aro", "pid,%cpu,rss,comm"]
         let out = Pipe()
         p.standardOutput = out
-        p.standardError = Pipe()
+        // Discard stderr. A filled unread pipe plus wait-before-read deadlocks `ps`
+        // once the process list is larger than the pipe buffer.
+        p.standardError = FileHandle.nullDevice
         do {
             try p.run()
-            p.waitUntilExit()
         } catch {
             return [:]
         }
         let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
         guard let text = String(data: data, encoding: .utf8) else { return [:] }
 
         var map: [Int32: Sample] = [:]

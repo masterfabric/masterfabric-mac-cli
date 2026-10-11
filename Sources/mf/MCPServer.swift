@@ -177,6 +177,21 @@ final class MCPServer {
             ),
             tool(name: "get_battery", description: "Battery percent, health, cycles, watts."),
             tool(name: "get_memory", description: "Memory usage, swap, and pressure."),
+            tool(
+                name: "get_memory_room",
+                description: "RAM usage, bytes still allocatable for a model, and the largest processes. Quit one at a time with release_memory.",
+                properties: [
+                    "limit": ["type": "integer", "description": "How many processes to list (default 20)"],
+                ]
+            ),
+            tool(
+                name: "release_memory",
+                description: "Quit one process by pid so its memory can be reused by a model. Sends SIGTERM. Refuses protected system processes, Tailscale, and this menu bar. force=true sends SIGKILL.",
+                properties: [
+                    "pid": ["type": "integer", "description": "Process ID from get_memory_room"],
+                    "force": ["type": "boolean", "description": "Send SIGKILL instead of SIGTERM"],
+                ]
+            ),
             tool(name: "get_disk", description: "Root volume disk capacity."),
             tool(name: "get_network", description: "Network interface byte rates."),
             tool(name: "get_cpu_load", description: "Overall, P/E cluster, and per-core CPU load."),
@@ -264,6 +279,19 @@ final class MCPServer {
             return try JSONOutput.string(BatteryService.current())
         case "get_memory":
             return try JSONOutput.string(MemoryService.current())
+        case "get_memory_room":
+            let limit = intArgument(arguments["limit"]) ?? 20
+            return try JSONOutput.string(MemoryRoomService.snapshot(limit: limit))
+        case "release_memory":
+            guard let pid = int32Argument(arguments["pid"]) else {
+                throw NSError(
+                    domain: "MasterFabricMCP",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "pid is required"]
+                )
+            }
+            let force = arguments["force"] as? Bool ?? false
+            return try JSONOutput.string(MemoryRoomService.release(pid: pid, force: force))
         case "get_disk":
             return try JSONOutput.string(DiskService.current())
         case "get_network":
@@ -320,6 +348,22 @@ final class MCPServer {
                 userInfo: [NSLocalizedDescriptionKey: "Unknown tool: \(name)"]
             )
         }
+    }
+
+    private func intArgument(_ value: Any?) -> Int? {
+        guard let number = numberArgument(value) else { return nil }
+        return number.intValue
+    }
+
+    private func int32Argument(_ value: Any?) -> Int32? {
+        guard let number = numberArgument(value) else { return nil }
+        return number.int32Value
+    }
+
+    /// JSON numbers arrive as NSNumber. Booleans are NSNumber too, so they are rejected.
+    private func numberArgument(_ value: Any?) -> NSNumber? {
+        if value is Bool { return nil }
+        return value as? NSNumber
     }
 
     private func respond(id: Any?, result: [String: Any]) {

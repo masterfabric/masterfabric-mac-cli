@@ -32,6 +32,39 @@ Built for developers who want local hardware context inside their coding agents 
 
 ---
 
+## What's new in 0.4.16
+
+**RAM room** shows how many bytes a new model can still allocate, then frees that space one app at a time.
+
+macOS “free” memory is not the same number a model can take. Room uses `os_proc_available_memory`: cached memory macOS can reclaim counts; wired and compressed memory does not. The menu bar draws that number live for 60 seconds, with your target as a dashed line.
+
+| Surface | What it does |
+|---------|----------------|
+| **Menu bar** | Memory-chip button, or the Memory row. **− / +** sets the target (default **8 GB**, saved as `menubar.model_room_target_gb`, range 1–32). **Make N GB** quits the largest eligible apps until that much is allocatable. **Stop** halts. **Free**, then **Quit**, releases one row. |
+| **CLI** | `mf memory room`, `mf memory make`, `mf memory free --pid <PID>` |
+| **MCP** | `get_memory_room`, `release_memory` |
+
+**Make room** sends a normal quit (`SIGTERM`), one process at a time, and skips anything under 64 MB. It leaves these running:
+
+- Cursor itself
+- Model runtimes (Ollama, llama.cpp, LM Studio, MLX, vLLM, GPT4All)
+- System processes, Tailscale, and this menu bar
+
+You can still quit a model runtime or Cursor from a single **Free** row. `mf memory free --force` sends `SIGKILL` and is CLI-only. A quit can discard unsaved work in that app if the app does not save on exit.
+
+```bash
+mf memory room
+mf memory room --limit 10 --json
+mf config set menubar.model_room_target_gb 16
+mf memory make
+mf memory free --pid 1234
+mf memory free --pid 1234 --force
+```
+
+Process sampling also no longer stalls when `ps` fills its error pipe, so top processes and RAM room stay responsive on a busy Mac.
+
+---
+
 ## MCP — agent-ready
 
 MasterFabric speaks **Model Context Protocol** out of the box. Point Cursor or Claude Desktop at one binary:
@@ -65,6 +98,8 @@ Copy-paste starter: [examples/mcp.json](examples/mcp.json)
 | `get_info` | Model, chip (P+E cores), macOS, RAM, uptime |
 | `get_battery` | %, health, cycles, watts |
 | `get_memory` / `get_disk` / `get_network` | Host metrics |
+| `get_memory_room` | Allocatable RAM (`availableBytes`), quittable RSS, and the largest processes. Optional `limit` (default 20) |
+| `release_memory` | Quit one process by `pid`. Default signal is `SIGTERM`; `force: true` sends `SIGKILL`. Refuses pid 1, this process, system daemons, Tailscale, and the menu bar |
 | `get_cpu_load` | Overall + P/E cluster + per-core % |
 | `get_power` | Thermal state, Low Power Mode |
 | `get_top` / `get_history` | Hot processes + 1h sparklines |
@@ -139,6 +174,7 @@ mf login enable     # start at login
 App bundle: `~/.local/MasterFabricMenuBar.app` (no Dock icon).
 
 - **Fan control** — **Auto** / **Full** for CPU + GPU fans (one-time admin helper install)
+- **RAM room** — memory-chip button, or the Memory row. Allocatable bytes, a 60-second graph, and a **Make N GB** target. See [What's new in 0.4.16](#whats-new-in-0416).
 - **Settings** — gear next to Quit; saved under `[menubar]` in `config.toml`
 - **Local notifications** — Settings → **Notifications** (top): off by default; turning On asks macOS for permission; **Test notification** sends a sample banner (`alerts.notify_local`)
 - **Alerts** — tap thermometer / GPU / fan / memory / disk / battery / power icons to edit thresholds; optional **Send to Integrations**
@@ -156,6 +192,8 @@ Scriptable metrics with `--json`. Example session (status, fan helper, Auto/Full
 mf status
 mf cpu
 mf memory
+mf memory room
+mf memory make
 mf notify status
 mf bot --help
 mf about
@@ -183,7 +221,7 @@ sudo mf fan auto
 Menu Bar **Auto** / **Full** installs a root helper the first time (one password), then switches without prompting again.
 
 ```text
-mf battery | memory | disk | network | cpu
+mf battery | memory | memory room | memory make | memory free --pid <PID> [--force] | disk | network | cpu
 mf power | top | history | watch
 mf check [--notify]
 mf notify status | test | send --channel slack "hello"
@@ -304,6 +342,7 @@ Bump a release: edit `VERSION`, run `make version-sync`, commit, tag `vX.Y.Z`.
 ```bash
 mf config init
 mf config set alerts.cpu_temp_celsius 88
+mf config set menubar.model_room_target_gb 16
 ```
 
 **Privacy-first:** readings stay on-device. No analytics, no accounts, no network calls for core monitoring.
