@@ -193,11 +193,64 @@ extension MF {
     }
 
     struct Memory: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "Show memory usage and pressure.")
-        @OptionGroup var format: JSONFlagOptions
-        func run() throws {
-            let m = MemoryService.current()
-            print(format.json ? try JSONOutput.string(m) : TextFormat.memory(m))
+        static let configuration = CommandConfiguration(
+            abstract: "Show memory usage, or free RAM one process at a time for a model.",
+            subcommands: [Show.self, Room.self, Free.self, Make.self],
+            defaultSubcommand: Show.self
+        )
+
+        struct Show: ParsableCommand {
+            static let configuration = CommandConfiguration(abstract: "Show memory usage and pressure.")
+            @OptionGroup var format: JSONFlagOptions
+            func run() throws {
+                let m = MemoryService.current()
+                print(format.json ? try JSONOutput.string(m) : TextFormat.memory(m))
+            }
+        }
+
+        struct Room: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Show allocatable RAM and the processes you can quit for a model."
+            )
+            @OptionGroup var format: JSONFlagOptions
+            @Option(name: .shortAndLong, help: "Number of processes.")
+            var limit: Int = 20
+            func run() throws {
+                let room = MemoryRoomService.snapshot(limit: limit)
+                print(format.json ? try JSONOutput.string(room) : TextFormat.memoryRoom(room))
+            }
+        }
+
+        struct Make: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Quit eligible apps until allocatable RAM reaches the saved target."
+            )
+            func run() {
+                let targetGB = ConfigStore.load().menuBar.modelRoomTargetGB
+                let target = MemoryRoomService.targetBytes(gigabytes: targetGB)
+                print("Making \(TextFormat.bytes(target)) allocatable…")
+                fflush(stdout)
+                MemoryRoomService.makeRoom(targetBytes: { target }) { step in
+                    print(step.detail)
+                    fflush(stdout)
+                }
+            }
+        }
+
+        struct Free: ParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Quit one process so its RAM can be reused by a model."
+            )
+            @OptionGroup var format: JSONFlagOptions
+            @Option(name: .long, help: "Process ID to quit.")
+            var pid: Int32
+            @Flag(name: .long, help: "Send SIGKILL if the process ignores a normal quit.")
+            var force: Bool = false
+            func run() throws {
+                let result = MemoryRoomService.release(pid: pid, force: force)
+                print(format.json ? try JSONOutput.string(result) : result.detail)
+                if !result.ok { throw ExitCode.failure }
+            }
         }
     }
 
@@ -360,6 +413,9 @@ extension MF {
                     c.alerts.fanNearMaxPercent = Double(value) ?? c.alerts.fanNearMaxPercent
                 case "alerts.memory_pressure_notify":
                     c.alerts.memoryPressureNotify = ["1", "true", "yes", "on"].contains(value.lowercased())
+                case "menubar.model_room_target_gb":
+                    let parsed = Double(value) ?? c.menuBar.modelRoomTargetGB
+                    c.menuBar.modelRoomTargetGB = min(32, max(1, parsed))
                 case "alerts.disk_enabled":
                     c.alerts.diskEnabled = ["1", "true", "yes", "on"].contains(value.lowercased())
                 case "alerts.disk_used_percent_max":

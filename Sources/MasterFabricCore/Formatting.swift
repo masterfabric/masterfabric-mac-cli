@@ -149,6 +149,32 @@ public enum TextFormat {
         """
     }
 
+    public static func memoryRoom(_ room: MemoryRoom) -> String {
+        var lines = [
+            "RAM room — quit one process at a time to leave space a model can allocate.",
+            "",
+            memory(room.memory),
+            "Room:       \(bytes(room.availableBytes)) allocatable",
+            "Target:     \(String(format: "%.0f GB", ConfigStore.load().menuBar.modelRoomTargetGB)) allocatable",
+            "Quittable:  \(bytes(room.quittableBytes)) across apps you can quit",
+            "",
+            "PID     MEM       KIND        NAME",
+        ]
+        for consumer in room.consumers {
+            let kind = consumer.releasable ? consumer.role : "protected"
+            lines.append(String(
+                format: "%-6d %8@  %-10@  %@",
+                consumer.pid,
+                bytes(consumer.memoryBytes) as NSString,
+                kind as NSString,
+                consumer.name as NSString
+            ))
+        }
+        lines.append("")
+        lines.append("Free one:  mf memory free --pid <PID>")
+        return lines.joined(separator: "\n")
+    }
+
     public static func disk(_ d: DiskInfo) -> String {
         """
         Volume: \(d.path)
@@ -236,6 +262,7 @@ public enum TextFormat {
         alerts.gpu_temp:       \(c.alerts.gpuTempEnabled) ≥ \(c.alerts.gpuTempCelsius)°C
         alerts.fan_near_max:   \(c.alerts.fanEnabled) ≥ \(c.alerts.fanNearMaxPercent)%
         alerts.memory_notify:  \(c.alerts.memoryPressureNotify)
+        ram_room_target_gb:    \(String(format: "%.0f", c.menuBar.modelRoomTargetGB))
         alerts.disk:           \(c.alerts.diskEnabled) ≥ \(c.alerts.diskUsedPercentMax)%
         alerts.battery:        \(c.alerts.batteryEnabled) ≤ \(c.alerts.batteryPercentMin)%
         alerts.low_power:      \(c.alerts.lowPowerModeNotify)

@@ -10,7 +10,7 @@ Native **Swift / SPM** macOS toolkit (macOS 13+):
 |---------|------|
 | `mf` | CLI + **MCP** stdio server (`mf mcp`) |
 | `MasterFabricMenuBar` | Menu bar app (`mf menubar`) |
-| `MasterFabricCore` | Shared metrics, config, integrations, version |
+| `MasterFabricCore` | Shared metrics, config, integrations, version. RAM room lives in `MemoryRoomService` |
 | `GenerateScreenshot` | Marketing / docs screenshot helper |
 
 Sensors and config stay **on-device**. No telemetry. Experimental OSS (MIT).
@@ -70,6 +70,10 @@ After install: ensure `~/.local/bin` is on `PATH`. Prefer `make install` over co
 ```bash
 mf version
 mf status --json
+mf memory room
 mf menubar
 # MCP: mf mcp  (stdio JSON-RPC)
+# RAM room tools: get_memory_room, release_memory
 ```
+
+**RAM room (0.4.16):** allocatable bytes for a local model. Menu bar **Make N GB** and `mf memory make` quit eligible apps one at a time (`SIGTERM`) until `menubar.model_room_target_gb` (default 8) is free. Cursor, model runtimes, Tailscale, system processes, and this menu bar are not auto-quit. `release_memory` / `mf memory free --pid` quit one process; `--force` is `SIGKILL`.

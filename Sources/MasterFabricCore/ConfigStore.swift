@@ -138,6 +138,8 @@ public enum ConfigStore {
                 case "panel_alerts": config.menuBar.panelAlerts = value == "true"
                 case "panel_integrations": config.menuBar.panelIntegrations = value == "true"
                 case "panel_about": config.menuBar.panelAbout = value == "true"
+                case "model_room_target_gb":
+                    config.menuBar.modelRoomTargetGB = Double(value) ?? config.menuBar.modelRoomTargetGB
                 default: break
                 }
             }
@@ -199,6 +201,7 @@ public enum ConfigStore {
         panel_alerts = \(mb.panelAlerts)
         panel_integrations = \(mb.panelIntegrations)
         panel_about = \(mb.panelAbout)
+        model_room_target_gb = \(mb.modelRoomTargetGB)
 
         [alerts]
         enabled = \(config.alerts.enabled)
