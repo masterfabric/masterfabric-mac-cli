@@ -1,0 +1,19 @@
+name: Documentation
+description: README, examples, or install steps are wrong or unclear
+title: "[DOCS] "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: where
+    attributes:
+      label: Where
+      description: File or section, and what a reader would misunderstand.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording
+    validations:
+      required: false

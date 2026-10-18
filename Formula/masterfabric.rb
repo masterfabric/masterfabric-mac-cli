@@ -1,9 +1,9 @@
 class MasterFabric < Formula
   desc "Open-source MacBook monitor — CLI, menu bar, and MCP for AI agents"
-  homepage "https://github.com/gurkanfikretgunak/masterfabric-mac-cli"
-  url "https://github.com/gurkanfikretgunak/masterfabric-mac-cli/archive/refs/tags/v0.4.17.tar.gz"
+  homepage "https://github.com/masterfabric/masterfabric-mac-cli"
+  url "https://github.com/masterfabric/masterfabric-mac-cli/archive/refs/tags/v0.4.17.tar.gz"
   sha256 "REPLACE_WITH_RELEASE_TARBALL_SHA256"
-  license "MIT"
+  license "AGPL-3.0-only"
   depends_on xcode: ["14.0", :build]
   depends_on macos: :ventura
 
@@ -23,7 +23,7 @@ class MasterFabric < Formula
         }
 
       Menu bar: mf menubar
-      Docs: https://github.com/gurkanfikretgunak/masterfabric-mac-cli
+      Docs: https://github.com/masterfabric/masterfabric-mac-cli
     EOS
   end
 

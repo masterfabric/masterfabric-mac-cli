@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/masterfabric/masterfabric-mac-cli/blob/main/SECURITY.md
+    about: Do not file a public issue for vulnerabilities. Email license@masterfabric.co.
+  - name: Documentation
+    url: https://github.com/masterfabric/masterfabric-mac-cli/blob/main/README.md
+    about: Install, CLI, menu bar, and MCP usage.
+  - name: OSMEA
+    url: https://github.com/masterfabric-mobile/osmea
+    about: MasterFabric mobile architecture. A different product, same license family.

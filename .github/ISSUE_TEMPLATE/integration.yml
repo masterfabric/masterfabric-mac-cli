@@ -1,0 +1,37 @@
+name: Integration
+description: Slack, Telegram, or Mail notification setup
+title: "[INTEGRATION] "
+labels: ["integration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste a webhook URL, bot token, SMTP password, API key, or chat id.
+        Those belong only in ~/.config/masterfabric/config.toml.
+
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Channel
+      options:
+        - Slack
+        - Telegram
+        - Mail
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What failed
+      description: The command or menu path, and the error text with secrets removed.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Secrets
+      options:
+        - label: I removed credentials from this report
+          required: true

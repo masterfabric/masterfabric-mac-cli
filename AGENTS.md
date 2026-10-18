@@ -13,7 +13,7 @@ Native **Swift / SPM** macOS toolkit (macOS 13+):
 | `MasterFabricCore` | Shared metrics, config, integrations, version. RAM room lives in `MemoryRoomService` |
 | `GenerateScreenshot` | Marketing / docs screenshot helper |
 
-Sensors and config stay **on-device**. No telemetry. Experimental OSS (MIT).
+Sensors and config stay **on-device**. No telemetry. Experimental OSS (AGPL-3.0).
 
 ## Layout
 

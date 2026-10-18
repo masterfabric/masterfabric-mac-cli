@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in mf, the menu bar, or MCP is wrong
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do not paste webhooks, bot tokens, SMTP passwords, or chat ids.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      options:
+        - label: I searched existing issues
+          required: true
+        - label: I am on the latest release or a current build from main
+          required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - mf CLI
+        - Menu bar
+        - MCP
+        - Install or update
+        - Fan helper
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      placeholder: What you ran, and what you saw.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, chip (for example M4), and `mf version` output.
+      placeholder: |
+        macOS: 15.x
+        Chip: Apple M4
+        mf version: 0.4.17
+    validations:
+      required: true

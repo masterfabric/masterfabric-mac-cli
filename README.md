@@ -8,27 +8,29 @@
 
 > MacBook system monitor with a first-class **MCP** server — so Cursor, Claude, and any agent can read CPU/GPU temps, fans, battery, and more on your machine.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-black.svg)](https://github.com/gurkanfikretgunak/masterfabric-mac-cli)
-[![MCP](https://img.shields.io/badge/MCP-stdio%20ready-6E56CF.svg)](https://github.com/gurkanfikretgunak/masterfabric-mac-cli#mcp--agent-ready)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-black.svg)](https://github.com/masterfabric/masterfabric-mac-cli)
+[![MCP](https://img.shields.io/badge/MCP-stdio%20ready-6E56CF.svg)](https://github.com/masterfabric/masterfabric-mac-cli#mcp--agent-ready)
 [![Swift](https://img.shields.io/badge/Swift-5.9-F05138.svg)](Package.swift)
 [![Status](https://img.shields.io/badge/status-experimental-red.svg)](README.md)
 
-**Repo:** [github.com/gurkanfikretgunak/masterfabric-mac-cli](https://github.com/gurkanfikretgunak/masterfabric-mac-cli)
+**Repo:** [github.com/masterfabric/masterfabric-mac-cli](https://github.com/masterfabric/masterfabric-mac-cli)
 
-Native Swift · Apple Silicon first · **No telemetry** · MIT
+Native Swift · Apple Silicon first · **No telemetry** · AGPL-3.0
 
 ---
 
 ## Why MasterFabric?
 
+![On your Mac, for your agent](docs/screenshots/purpose.png)
+
+Temps, fans, storage, and allocatable RAM stay on this Mac. The menu bar, the `mf` CLI, and a local MCP server read the same sensors. Nothing is uploaded.
+
 | Surface | What you get |
 |--------|----------------|
-| **MCP** | AI agents call `get_status`, `get_battery`, `get_cpu_load`, … over stdio |
-| **CLI (`mf`)** | Scriptable metrics with `--json` |
-| **Menu Bar** | Always-on status strip (4 styles) · fan Auto/Full · settings gear · alerts |
-
-Built for developers who want local hardware context inside their coding agents — not another closed menu-bar utility.
+| **Menu bar** | Meters for heat, load, and fans. A storage fill bar. RAM room asks before it quits apps. |
+| **CLI (`mf`)** | The same metrics as `--json`, including `mf disk` and `mf memory room`. |
+| **MCP** | `get_status`, `get_disk`, `get_memory_room`, and the rest, over local stdio. |
 
 ---
 
@@ -132,13 +134,13 @@ Copy-paste starter: [examples/mcp.json](examples/mcp.json)
 **One-liner:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gurkanfikretgunak/masterfabric-mac-cli/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/masterfabric/masterfabric-mac-cli/main/scripts/install.sh | bash
 ```
 
 **From source:**
 
 ```bash
-git clone https://github.com/gurkanfikretgunak/masterfabric-mac-cli.git
+git clone https://github.com/masterfabric/masterfabric-mac-cli.git
 cd masterfabric-mac-cli
 make install
 export PATH="$HOME/.local/bin:$PATH"
@@ -160,7 +162,7 @@ Homebrew formula (tap after tagging a release): [`Formula/masterfabric.rb`](Form
 
 ## Menu Bar
 
-Live status item with configurable styles (CPU °C · load · fan, temp-only, fan-only, or capsule pill). Click for metrics, **Fan Auto/Full**, **Alerts**, **Integrations**, and **Settings** (gear next to Quit).
+Live status item. Click it for meters, storage, RAM, **Fan Auto/Full**, and **Settings** (gear next to Quit). Alerts and integrations live in Settings.
 
 ![MasterFabric menu bar panel](docs/screenshots/menubar.png)
 
@@ -171,9 +173,12 @@ Open the panel → gear next to **Quit**. Choose a status style and toggle what 
 | Style | Look |
 |-------|------|
 | **Standard** | CPU · load · fan + green **A** / blue **F** badge |
+| **Compact** | Short values, less chrome |
+| **Stacked** | Temperature over load and fan |
+| **Meters** | Heat and load bars beside the values |
+| **Capsule** | Dark pill, tinted by heat |
 | **Temp only** | Just degrees, e.g. `52°` |
 | **Fan only** | Just RPM |
-| **Capsule** | Dark pill background + metrics + badge |
 
 ![Menu bar status styles](docs/screenshots/menubar-styles.png)
 
@@ -334,17 +339,19 @@ Single source of truth: root [`VERSION`](VERSION) (synced into `AppVersion.curre
 
 ```bash
 mf version              # local
-mf version --check      # compare to GitHub releases/tags (open-source repo)
+mf version --check      # compare to the GitHub release (masterfabric/masterfabric-mac-cli)
 mf version --check --json
-mf update               # install newer release from GitHub (scripts/install.sh)
-mf update --force       # reinstall even if already current
+mf update               # install that release tag, then reopen the menu bar if it was running
+mf update --force       # reinstall the current release
 mf update --json        # machine-readable result
 ```
 
-Exit code `2` means an update is available. Install/update from source:
+`mf update` clones the published tag, builds it, and installs into `~/.local`. The menu bar quits before its binary is replaced, then opens again. A failure stays on screen and in `~/.local/share/masterfabric/update.log`.
+
+Exit code `2` means an update is available. Install from source:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gurkanfikretgunak/masterfabric-mac-cli/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/masterfabric/masterfabric-mac-cli/main/scripts/install.sh | bash
 ```
 
 Bump a release: edit `VERSION`, run `make version-sync`, commit, tag `vX.Y.Z`.
@@ -365,8 +372,10 @@ mf config set menubar.model_room_target_gb 16
 
 ## Open source
 
-- **License:** [MIT](LICENSE)
-- **Issues / PRs:** welcome at [gurkanfikretgunak/masterfabric-mac-cli](https://github.com/gurkanfikretgunak/masterfabric-mac-cli)
+- **License:** [GNU AGPL-3.0](LICENSE) — same family as [OSMEA](https://github.com/masterfabric-mobile/osmea) and [masterfabric_core](https://github.com/masterfabric-mobile/masterfabric_core)
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) · commits in [commits.md](commits.md)
+- **Security:** [SECURITY.md](SECURITY.md) · conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Issues / PRs:** welcome at [masterfabric/masterfabric-mac-cli](https://github.com/masterfabric/masterfabric-mac-cli)
 - **Stack:** SwiftPM · IOKit/SMC · SwiftUI `MenuBarExtra` · MCP JSON-RPC stdio
 
 ```bash
@@ -379,4 +388,6 @@ make install
 
 ## License
 
-MIT © MasterFabric contributors
+GNU Affero General Public License v3.0 © MASTERFABRIC Bilişim Teknoloji A.Ş. and contributors.
+
+You can use, modify, and share this program under AGPL-3.0. If you run a modified version as a network service, you must offer the corresponding source to its users. See [LICENSE](LICENSE).
