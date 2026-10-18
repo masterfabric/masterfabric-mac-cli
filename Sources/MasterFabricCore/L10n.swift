@@ -68,6 +68,7 @@ public enum AboutInfo {
                  \(authorURL)
         Company: \(company) — open-source
                  \(companyURL)
+        License: GNU AGPL-3.0
         Repo:    \(repoURL)
 
         Surfaces: CLI (`mf`) · Menu Bar · MCP (`mf mcp`)

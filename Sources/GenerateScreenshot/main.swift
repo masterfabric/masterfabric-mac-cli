@@ -21,52 +21,57 @@ struct GenerateScreenshot {
         let power = PowerService.current()
         HistoryStore.record()
         let history = HistoryStore.snapshot()
-        var config = ConfigStore.load()
-        config.language = "en"
-        config.integrations.telegram.enabled = true
-        config.integrations.telegram.botToken = "demo"
-        config.integrations.telegram.chatID = "123456789"
-        let alerts = AlertService.evaluate(
-            status: status,
-            memory: memory,
-            disk: DiskService.current(),
-            battery: battery,
-            power: power,
-            config: config
-        )
-
         let outDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("docs/screenshots", isDirectory: true)
         try? FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
         let display = MenuBarDisplayConfig.default
-        let title = TextFormat.compactStatusBar(status, load: load, battery: battery, display: display)
+        let disk = DiskService.current()
         let fanFull = FanService.isFullMode(status.fans)
+        let statusImage = StatusItemRenderer.make(
+            status: status,
+            load: load,
+            battery: battery,
+            memory: memory,
+            disk: disk,
+            display: display,
+            isFull: fanFull
+        )
+
+        writePNG(
+            content: PurposeShot()
+                .padding(24)
+                .frame(width: 880)
+                .background(Color(nsColor: .windowBackgroundColor)),
+            to: outDir.appendingPathComponent("purpose.png")
+        )
 
         writePNG(
             content: MenuBarShot(
-                title: title,
-                fanIsFull: fanFull,
-                showFanBadge: !status.fans.isEmpty,
+                statusImage: statusImage,
                 info: info,
                 status: status,
                 load: load,
                 power: power,
                 battery: battery,
                 memory: memory,
-                history: history,
-                alerts: alerts,
-                alertConfig: config.alerts,
-                integrations: config.integrations
+                disk: disk,
+                history: history
             )
             .padding(20)
-            .frame(width: 380)
+            .frame(width: 400)
             .background(Color(nsColor: .windowBackgroundColor)),
             to: outDir.appendingPathComponent("menubar.png")
         )
 
         writePNG(
-            content: MenuBarSettingsShot(draft: display)
+            content: MenuBarSettingsShot(
+                draft: display,
+                status: status,
+                load: load,
+                battery: battery,
+                fanIsFull: fanFull
+            )
                 .padding(20)
                 .frame(width: 380)
                 .background(Color(nsColor: .windowBackgroundColor)),
@@ -81,7 +86,7 @@ struct GenerateScreenshot {
             to: outDir.appendingPathComponent("menubar-styles.png")
         )
 
-        let cliBody = buildCLITranscript(status: status, info: info, load: load, memory: memory)
+        let cliBody = buildCLITranscript(status: status, info: info, load: load, memory: memory, disk: disk)
         writePNG(
             content: TerminalShot(transcript: cliBody)
                 .padding(24)
@@ -95,7 +100,8 @@ struct GenerateScreenshot {
         status: SystemStatus,
         info: SystemInfo,
         load: CPULoadInfo,
-        memory: MemoryInfo
+        memory: MemoryInfo,
+        disk: DiskInfo
     ) -> String {
         let cpu = status.temperature.cpuCelsius.map { String(format: "%.1f°C", $0) } ?? "N/A"
         let gpu = status.temperature.gpuCelsius.map { String(format: "%.1f°C", $0) } ?? "N/A"
@@ -122,10 +128,16 @@ struct GenerateScreenshot {
         $ mf fan auto --elevate
         ✓ Fans set to Auto (system thermal)
 
+        $ mf disk
+        \(disk.volumeName.isEmpty ? disk.path : disk.volumeName): \(String(format: "%.0f%%", disk.usedPercent)) used · \(TextFormat.bytes(disk.freeBytes)) free
+
+        $ mf memory room
+        Room: \(TextFormat.bytes(MemoryRoomService.headroom().availableBytes)) allocatable · \(String(format: "%.0f%%", memory.usedPercent)) used
+
         $ mf about
         \(AboutInfo.product) v\(AboutInfo.version)
         \(info.model) · \(info.chip)
-        Privacy-first · no telemetry · MIT
+        Privacy-first · no telemetry · AGPL-3.0
         """
     }
 
@@ -153,51 +165,6 @@ struct GenerateScreenshot {
 
 // MARK: - Shared chrome
 
-private struct StatusStrip: View {
-    let title: String
-    let showBadge: Bool
-    let fanIsFull: Bool
-    var capsule: Bool = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("MF")
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.secondary.opacity(0.2))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-
-            HStack(spacing: 5) {
-                Text(title)
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(capsule ? .white : .primary)
-                if showBadge {
-                    Text(fanIsFull ? "F" : "A")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            fanIsFull
-                                ? Color(red: 0.20, green: 0.48, blue: 0.96)
-                                : Color(red: 0.18, green: 0.72, blue: 0.36),
-                            in: RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        )
-                }
-            }
-            .padding(.horizontal, capsule ? 8 : 0)
-            .padding(.vertical, capsule ? 3 : 0)
-            .background(
-                capsule
-                    ? Capsule().fill(Color(white: 0.22).opacity(0.92))
-                    : nil
-            )
-            Spacer()
-        }
-    }
-}
-
 private func shotRow(_ label: String, _ value: String) -> some View {
     HStack {
         Text(label).foregroundStyle(.secondary)
@@ -206,52 +173,241 @@ private func shotRow(_ label: String, _ value: String) -> some View {
     }
 }
 
+private enum ShotMeterTint {
+    case heat(Double)
+    case load
+    case capacity
+    case battery
+    case fan
+}
+
+private struct ShotMeter: View {
+    var percent: Double
+    var tint: ShotMeterTint
+
+    var body: some View {
+        Capsule()
+            .fill(Color.primary.opacity(0.08))
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(fill)
+                        .frame(width: max(4, geo.size.width * CGFloat(min(1, max(0, percent / 100)))))
+                }
+            }
+            .frame(height: 5)
+            .clipShape(Capsule())
+    }
+
+    private var fill: Color {
+        switch tint {
+        case .heat(let celsius):
+            if celsius >= 88 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            if celsius >= 78 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
+            if celsius >= 65 { return Color(red: 0.92, green: 0.75, blue: 0.12) }
+            return Color(red: 0.22, green: 0.78, blue: 0.42)
+        case .load, .fan:
+            if percent >= 85 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            if percent >= 60 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
+            return Color(red: 0.20, green: 0.62, blue: 0.95)
+        case .capacity:
+            if percent >= 90 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            if percent >= 75 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
+            return Color(red: 0.22, green: 0.72, blue: 0.42)
+        case .battery:
+            if percent <= 20 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            return Color(red: 0.22, green: 0.72, blue: 0.42)
+        }
+    }
+}
+
+private struct ShotSparkline: View {
+    var samples: [HistorySample]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text("Last hour").foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                legend(Color(red: 0.95, green: 0.55, blue: 0.15), "CPU")
+                legend(Color(red: 0.20, green: 0.62, blue: 0.95), "Load")
+            }
+            .font(.caption)
+            Canvas { context, size in
+                let plot = CGRect(x: 0, y: 3, width: size.width, height: max(1, size.height - 6))
+                guard let start = samples.first?.timestamp, let end = samples.last?.timestamp else { return }
+                stroke(samples.compactMap { sample in sample.cpuCelsius.map { (sample.timestamp, $0) } }, in: plot, from: start, to: end, low: 30, high: 100, color: Color(red: 0.95, green: 0.55, blue: 0.15), context: context)
+                stroke(samples.compactMap { sample in sample.cpuLoadPercent.map { (sample.timestamp, $0) } }, in: plot, from: start, to: end, low: 0, high: 100, color: Color(red: 0.20, green: 0.62, blue: 0.95), context: context)
+            }
+            .frame(height: 36)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+        }
+    }
+
+    private func legend(_ color: Color, _ title: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(title).foregroundStyle(.secondary)
+        }
+    }
+
+    private func stroke(
+        _ points: [(Date, Double)],
+        in plot: CGRect,
+        from start: Date,
+        to end: Date,
+        low: Double,
+        high: Double,
+        color: Color,
+        context: GraphicsContext
+    ) {
+        guard points.count >= 2 else { return }
+        let span = max(end.timeIntervalSince(start), 1)
+        let valueSpan = max(high - low, 1)
+        var path = Path()
+        for (index, point) in points.enumerated() {
+            let x = plot.minX + CGFloat(point.0.timeIntervalSince(start) / span) * plot.width
+            let fraction = min(1, max(0, (point.1 - low) / valueSpan))
+            let y = plot.maxY - CGFloat(fraction) * plot.height
+            let next = CGPoint(x: x, y: y)
+            if index == 0 { path.move(to: next) } else { path.addLine(to: next) }
+        }
+        context.stroke(path, with: .color(color), lineWidth: 1.5)
+    }
+}
+
 // MARK: - Main panel
 
+private struct PurposeShot: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("On your Mac. For your agent.")
+                    .font(.title2.weight(.semibold))
+                Text("Temps, fans, storage, and allocatable RAM stay on this machine. The menu bar, the mf CLI, and a local MCP server all read the same sensors. No telemetry.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                purposeCard(
+                    symbol: "rectangle.topthird.inset.filled",
+                    title: "Menu bar",
+                    lines: [
+                        "Meters for heat, load, and fans",
+                        "Storage fill, used, and free",
+                        "RAM room asks before it quits apps",
+                    ]
+                )
+                purposeCard(
+                    symbol: "terminal",
+                    title: "CLI",
+                    lines: [
+                        "mf status --json",
+                        "mf disk",
+                        "mf memory room",
+                    ]
+                )
+                purposeCard(
+                    symbol: "desktopcomputer",
+                    title: "MCP",
+                    lines: [
+                        "get_status · get_disk",
+                        "get_memory_room",
+                        "Local stdio only",
+                    ]
+                )
+            }
+        }
+        .padding(22)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(0.12), radius: 16, y: 4)
+        )
+    }
+
+    private func purposeCard(symbol: String, title: String, lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 32, height: 32)
+                .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+            Text(title)
+                .font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(lines, id: \.self) { line in
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 168, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.primary.opacity(0.04))
+        )
+    }
+}
+
 private struct MenuBarShot: View {
-    let title: String
-    let fanIsFull: Bool
-    let showFanBadge: Bool
+    let statusImage: NSImage
     let info: SystemInfo
     let status: SystemStatus
     let load: CPULoadInfo
     let power: PowerInfo
     let battery: BatteryInfo
     let memory: MemoryInfo
+    let disk: DiskInfo
     let history: HistorySnapshot
-    let alerts: [String]
-    let alertConfig: AlertConfig
-    let integrations: IntegrationsConfig
-
-    private let alertKinds: [(String, String)] = [
-        ("thermometer.medium", "CPU"),
-        ("cpu", "GPU"),
-        ("fanblades", "Fan"),
-        ("memorychip", "Mem"),
-        ("internaldrive", "Disk"),
-        ("battery.100", "Batt"),
-        ("bolt.fill", "Power"),
-    ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            StatusStrip(title: title, showBadge: showFanBadge, fanIsFull: fanIsFull)
-                .padding(.bottom, 2)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("MF")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.55))
+                Image(nsImage: statusImage)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.82)))
 
-            Text("MasterFabric")
-                .font(.headline)
-            Text("MacBook system monitor · CLI · Menu Bar · MCP")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MasterFabric")
+                        .font(.headline)
+                    Text("Mac system monitor · CLI · Menu Bar · MCP")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "memorychip")
+                    .font(.system(size: 13, weight: .semibold))
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .semibold))
+            }
 
             shotRow("Model", info.model)
             shotRow("Chip", info.chip)
-
             Divider()
 
-            shotRow("CPU", status.temperature.cpuCelsius.map { String(format: "%.1f °C", $0) } ?? "N/A")
-            shotRow("GPU", status.temperature.gpuCelsius.map { String(format: "%.1f °C", $0) } ?? "N/A")
-            shotRow("Load", String(format: "%.1f%%", load.overallPercent))
+            if let cpu = status.temperature.cpuCelsius {
+                meterRow("CPU", String(format: "%.1f °C", cpu), percent: heatMeter(cpu), tint: .heat(cpu))
+            } else {
+                shotRow("CPU", "N/A")
+            }
+            if let gpu = status.temperature.gpuCelsius {
+                meterRow("GPU", String(format: "%.1f °C", gpu), percent: heatMeter(gpu), tint: .heat(gpu))
+            }
+            meterRow("Load", String(format: "%.1f%%", load.overallPercent), percent: load.overallPercent, tint: .load)
             shotRow("Thermal", power.thermalState)
 
             if status.fans.isEmpty {
@@ -260,93 +416,46 @@ private struct MenuBarShot: View {
                 ForEach(Array(status.fans.enumerated()), id: \.offset) { _, fan in
                     let rpm = fan.rpm.map { String(format: "%.0f", $0) } ?? "—"
                     let max = fan.maxRPM.map { String(format: "%.0f", $0) } ?? "?"
-                    shotRow(fan.name, "\(rpm)/\(max) · \(fan.mode)")
-                }
-                HStack {
-                    Text("Fan control")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("Auto")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.green)
-                    Text("Full")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.blue)
-                }
-            }
-
-            Divider()
-
-            if battery.isPresent {
-                shotRow("Battery", battery.percent.map { String(format: "%.0f%%", $0) } ?? "N/A")
-            }
-            shotRow("Memory", String(format: "%.0f%% · %@", memory.usedPercent, memory.pressure))
-            shotRow("CPU hist", history.cpuSparkline)
-
-            Divider()
-
-            HStack {
-                Text("Alerts")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text(alertConfig.enabled ? "On" : "Off")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 8) {
-                ForEach(Array(alertKinds.enumerated()), id: \.offset) { _, item in
-                    ZStack {
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.22))
-                            .frame(width: 28, height: 28)
-                        Image(systemName: item.0)
-                            .font(.system(size: 11, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 3) {
+                        shotRow(fan.name, "\(rpm)/\(max) · \(fan.mode)")
+                        if let current = fan.rpm, let cap = fan.maxRPM, cap > 0 {
+                            ShotMeter(percent: min(100, current / cap * 100), tint: .fan)
+                        }
                     }
                 }
-            }
-
-            if !alerts.isEmpty {
-                ForEach(alerts.prefix(2), id: \.self) { alert in
-                    Text(alert)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                HStack {
+                    Text("Fan control").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Auto").font(.caption.weight(.semibold))
+                    Text("Full").font(.caption.weight(.semibold)).foregroundStyle(.blue)
                 }
             }
 
             Divider()
-
-            HStack {
-                Text("Integrations")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Image(systemName: "plus.circle.fill")
-                    .foregroundStyle(.secondary)
+            if battery.isPresent, let percent = battery.percent {
+                meterRow("Battery", String(format: "%.0f%%", percent), percent: percent, tint: .battery)
             }
-            HStack(spacing: 8) {
-                ShotBrandBadge.telegram
-                Text("Telegram").font(.callout)
-                Spacer()
-                Text("On").font(.caption2).foregroundStyle(.secondary)
+            storageBlock
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text("Memory").foregroundStyle(.secondary)
+                    Spacer()
+                    Text(String(format: "%.0f%% · %@", memory.usedPercent, memory.pressure))
+                        .font(.body.monospacedDigit())
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                ShotMeter(percent: memory.usedPercent, tint: .capacity)
             }
+            ShotSparkline(samples: history.samples)
 
             Divider()
-
-            Text("About")
-                .font(.subheadline.weight(.semibold))
-            Text("\(AboutInfo.product) v\(AboutInfo.version)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Divider()
-
             HStack {
-                Text("Quit")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Quit").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Image(systemName: "gearshape")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
         }
@@ -357,58 +466,114 @@ private struct MenuBarShot: View {
                 .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
         )
     }
+
+    private var storageBlock: some View {
+        let name = disk.volumeName.isEmpty ? "Storage" : disk.volumeName
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(name).foregroundStyle(.secondary)
+                Spacer()
+                Text(disk.totalBytes > 0 ? String(format: "%.0f%%", disk.usedPercent) : "N/A")
+                    .font(.body.monospacedDigit())
+            }
+            ShotMeter(percent: disk.usedPercent, tint: .capacity)
+            Text(disk.totalBytes > 0
+                 ? "\(TextFormat.bytes(disk.usedBytes)) of \(TextFormat.bytes(disk.totalBytes)) · \(TextFormat.bytes(disk.freeBytes)) free"
+                 : "Capacity unavailable")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    private func heatMeter(_ celsius: Double) -> Double {
+        min(100, max(0, (celsius - 35) / 65 * 100))
+    }
+
+    private func meterRow(_ label: String, _ value: String, percent: Double, tint: ShotMeterTint) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            shotRow(label, value)
+            ShotMeter(percent: percent, tint: tint)
+        }
+    }
 }
 
 // MARK: - Settings shot
 
 private struct MenuBarSettingsShot: View {
     let draft: MenuBarDisplayConfig
+    let status: SystemStatus
+    let load: CPULoadInfo
+    let battery: BatteryInfo
+    let fanIsFull: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Menu Bar Settings")
+                Text("Settings")
                     .font(.headline)
                 Spacer()
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.secondary)
             }
 
-            Text("Status item style")
-                .font(.subheadline.weight(.semibold))
+            Text("Look")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.16), in: Capsule())
 
-            ForEach(MenuBarStatusStyle.allCases) { style in
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: draft.style == style ? "largecircle.fill.circle" : "circle")
-                        .foregroundStyle(draft.style == style ? Color.accentColor : .secondary)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(style.title)
-                            .font(.callout.weight(.medium))
-                        Text(style.subtitle)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
+            Text("Status item")
+                .font(.subheadline.weight(.semibold))
+            Text(draft.style.subtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                Text("MF")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.55))
+                Image(nsImage: StatusItemRenderer.make(
+                    status: status,
+                    load: load,
+                    battery: battery,
+                    memory: nil,
+                    display: draft,
+                    isFull: fanIsFull
+                ))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.82)))
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], spacing: 6) {
+                ForEach(MenuBarStatusStyle.allCases) { style in
+                    let selected = draft.style == style
+                    Text(style.title)
+                        .font(.caption.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(selected ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.06))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(selected ? Color.accentColor : Color.clear, lineWidth: 1)
+                        )
                 }
             }
 
             Divider()
 
-            Text("Show in menu bar")
+            Text("On the status item")
                 .font(.subheadline.weight(.semibold))
-            toggleRow("CPU temperature", draft.showCPUTemp)
-            toggleRow("CPU load %", draft.showLoad)
+            toggleRow("CPU °C", draft.showCPUTemp)
+            toggleRow("Load %", draft.showLoad)
             toggleRow("Fan RPM", draft.showFanRPM)
-            toggleRow("Fan A/F badge", draft.showFanBadge)
-
-            Divider()
-
-            Text("Show in panel")
-                .font(.subheadline.weight(.semibold))
-            toggleRow("Fans", draft.panelFans)
-            toggleRow("Fan control", draft.panelFanControl)
-            toggleRow("Alerts", draft.panelAlerts)
-            toggleRow("Integrations", draft.panelIntegrations)
+            toggleRow("Storage", draft.showDisk)
+            toggleRow("Memory", draft.showMemory)
 
             HStack {
                 Text("Reset").font(.caption).foregroundStyle(.secondary)
@@ -501,30 +666,6 @@ private struct StatusStylesShot: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.black.opacity(0.82))
             )
-        }
-    }
-}
-
-private enum ShotBrandBadge {
-    static var telegram: some View {
-        logo("brand-telegram")
-    }
-
-    private static func logo(_ name: String) -> some View {
-        Group {
-            if let url = Bundle.module.url(forResource: name, withExtension: "png"),
-               let ns = NSImage(contentsOf: url)
-            {
-                Image(nsImage: ns)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 22, height: 22)
-                    .clipShape(Circle())
-            } else {
-                Circle()
-                    .fill(Color(red: 34 / 255, green: 158 / 255, blue: 217 / 255))
-                    .frame(width: 22, height: 22)
-            }
         }
     }
 }

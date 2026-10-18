@@ -1,0 +1,19 @@
+name: Question
+description: Ask how to install, configure, or use the CLI, menu bar, or MCP
+title: "[QUESTION] "
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you already tried
+      description: Commands and `mf version`. Do not include secrets.
+    validations:
+      required: true

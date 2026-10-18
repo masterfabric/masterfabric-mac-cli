@@ -171,7 +171,7 @@ public enum ConfigStore {
         let mb = config.menuBar
         return """
         # MasterFabric configuration
-        # https://github.com/gurkanfikretgunak/masterfabric-mac-cli
+        # https://github.com/masterfabric/masterfabric-mac-cli
 
         [general]
         language = "\(escapeTOML(config.language))"

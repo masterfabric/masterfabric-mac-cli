@@ -447,6 +447,7 @@ final class MenuBarModel: ObservableObject {
     @Published var declinedRemoteVersion: String?
     @Published var isCheckingUpdate = false
     @Published var isUpdating = false
+    @Published var updateError = ""
 
     private var timer: Timer?
     private var trendTimer: Timer?
@@ -457,6 +458,13 @@ final class MenuBarModel: ObservableObject {
     private var makeRoomRun: MakeRoomRun?
 
     init() {
+        if let status = UpdateInstaller.consumeStatus() {
+            lastNotifyMessage = status.detail
+            if !status.ok {
+                updateError = status.detail
+                showUpdateDialog = true
+            }
+        }
         refreshMetrics()
         // Do not request notification permission on launch — only when user enables the setting.
         let interval = ConfigStore.load().pollIntervalSeconds
@@ -503,10 +511,7 @@ final class MenuBarModel: ObservableObject {
         showUpdateDialog = false
         memoryRoomMessage = ""
         showMemoryRoom = true
-        beginMakeRoomIfShort()
-        if !isMakingRoom {
-            refreshMemoryRoom()
-        }
+        refreshMemoryRoom()
     }
 
     func recordMemoryTrend() {
@@ -531,30 +536,17 @@ final class MenuBarModel: ObservableObject {
         var full = ConfigStore.load()
         full.menuBar = config
         try? ConfigStore.save(full)
-        if showMemoryRoom {
+        if showMemoryRoom, let run = makeRoomRun, isMakingRoom {
             let target = MemoryRoomService.targetBytes(gigabytes: config.modelRoomTargetGB)
-            if let run = makeRoomRun, isMakingRoom {
-                run.updateTarget(target)
-                memoryRoomMessage = "Making \(TextFormat.bytes(target))…"
-            } else {
-                beginMakeRoomIfShort()
-            }
-        }
-    }
-
-    /// Selecting a target above the current room starts freeing apps until that much is allocatable.
-    func beginMakeRoomIfShort() {
-        let head = MemoryRoomService.headroom()
-        let target = MemoryRoomService.targetBytes(gigabytes: displayConfig.modelRoomTargetGB)
-        if head.availableBytes >= target {
-            if isMakingRoom {
+            let head = MemoryRoomService.headroom()
+            if head.availableBytes >= target {
                 stopMakingRoom()
                 memoryRoomMessage = "Room reached \(TextFormat.bytes(head.availableBytes))."
+            } else {
+                run.updateTarget(target)
+                memoryRoomMessage = "Making \(TextFormat.bytes(target))…"
             }
-            return
         }
-        guard showMemoryRoom, !isMakingRoom else { return }
-        toggleMakeRoom()
     }
 
     func closeMemoryRoom() {
@@ -992,17 +984,28 @@ final class MenuBarModel: ObservableObject {
 
     func acceptUpdate() {
         guard !isUpdating else { return }
+        guard let remote = pendingUpdate?.remote else {
+            updateError = "GitHub did not return a release version."
+            return
+        }
         isUpdating = true
-        lastNotifyMessage = "Updating from GitHub…"
+        updateError = ""
+        let ref = UpdateInstaller.releaseRef(remote)
+        let prefix = ProcessInfo.processInfo.environment["MASTERFABRIC_PREFIX"] ?? "\(NSHomeDirectory())/.local"
+        let pid = ProcessInfo.processInfo.processIdentifier
+        lastNotifyMessage = "Installing \(ref). The menu bar will close and reopen when the build finishes."
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = UpdateService.update(force: false)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.isUpdating = false
-                self.showUpdateDialog = false
-                self.lastNotifyMessage = UpdateService.format(result)
-                if result.performed {
-                    self.declinedRemoteVersion = nil
+            do {
+                try UpdateInstaller.spawnDetached(ref: ref, prefix: prefix, waitForPID: pid)
+                DispatchQueue.main.async {
+                    NSApp.terminate(nil)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.isUpdating = false
+                    self.updateError = error.localizedDescription
+                    self.lastNotifyMessage = error.localizedDescription
                 }
             }
         }
@@ -1156,7 +1159,7 @@ struct UpdatePromptView: View {
             HStack {
                 Image(systemName: "arrow.down.circle.fill")
                     .foregroundStyle(.orange)
-                Text("Update available")
+                Text(model.updateError.isEmpty ? "Update available" : "Update failed")
                     .font(.headline)
                 Spacer()
                 Button {
@@ -1170,20 +1173,31 @@ struct UpdatePromptView: View {
             }
 
             let local = model.pendingUpdate?.local ?? AboutInfo.version
-            let remote = model.pendingUpdate?.remote ?? "?"
-            Text("A newer open-source release is on GitHub.")
+            let remote = model.pendingUpdate?.remote
+            Text("Installs the GitHub release, then reopens this menu bar.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("Installed: v\(local)")
                 .font(.callout.monospacedDigit())
-            Text("Latest:    v\(remote)")
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.orange)
+            if let remote {
+                Text("Latest:    v\(remote)")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.orange)
+            }
 
             if model.isUpdating {
-                Text("Updating from GitHub…")
+                Text("Closing to install. The menu bar reopens when the build finishes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !model.updateError.isEmpty {
+                Text(model.updateError)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(8)
             }
 
             HStack {
@@ -1192,11 +1206,13 @@ struct UpdatePromptView: View {
                 }
                 .disabled(model.isUpdating)
                 Spacer()
-                Button(model.isUpdating ? "Updating…" : "Update") {
-                    model.acceptUpdate()
+                if remote != nil {
+                    Button(model.isUpdating ? "Updating…" : "Update") {
+                        model.acceptUpdate()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(model.isUpdating)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.isUpdating)
             }
         }
     }
@@ -1225,7 +1241,7 @@ struct StatusHomeView: View {
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .buttonStyle(.borderless)
-                .help("RAM room — free memory for a model")
+                .help("Open RAM room")
                 Button {
                     model.refresh()
                 } label: {
@@ -1265,10 +1281,18 @@ struct StatusHomeView: View {
             }
 
             if d.panelCPU {
-                row("CPU", model.status.temperature.cpuCelsius.map { String(format: "%.1f °C", $0) } ?? "N/A")
+                if let cpu = model.status.temperature.cpuCelsius {
+                    meterRow("CPU", String(format: "%.1f °C", cpu), percent: heatMeter(cpu), tint: .heat(cpu))
+                } else {
+                    row("CPU", "N/A")
+                }
             }
             if d.panelGPU {
-                row("GPU", model.status.temperature.gpuCelsius.map { String(format: "%.1f °C", $0) } ?? "N/A")
+                if let gpu = model.status.temperature.gpuCelsius {
+                    meterRow("GPU", String(format: "%.1f °C", gpu), percent: heatMeter(gpu), tint: .heat(gpu))
+                } else {
+                    row("GPU", "N/A")
+                }
             }
             if d.panelLoad {
                 let loadText: String = {
@@ -1277,7 +1301,7 @@ struct StatusHomeView: View {
                     }
                     return String(format: "%.1f%%", model.load.overallPercent)
                 }()
-                row("Load", loadText)
+                meterRow("Load", loadText, percent: model.load.overallPercent, tint: .load)
             }
             if d.panelThermal {
                 row("Thermal", model.power.thermalState)
@@ -1291,7 +1315,12 @@ struct StatusHomeView: View {
                         ForEach(Array(model.status.fans.enumerated()), id: \.offset) { _, fan in
                             let rpm = fan.rpm.map { String(format: "%.0f", $0) } ?? "—"
                             let max = fan.maxRPM.map { String(format: "%.0f", $0) } ?? "?"
-                            row(fan.name, "\(rpm)/\(max) · \(fan.mode)")
+                            VStack(alignment: .leading, spacing: 3) {
+                                row(fan.name, "\(rpm)/\(max) · \(fan.mode)")
+                                if let current = fan.rpm, let cap = fan.maxRPM, cap > 0 {
+                                    MeterBar(percent: min(100, current / cap * 100), tint: .fan)
+                                }
+                            }
                         }
                     }
                     if d.panelFanControl, !model.status.fans.isEmpty {
@@ -1323,7 +1352,11 @@ struct StatusHomeView: View {
             if d.panelBattery || d.panelMemory || d.panelDisk || d.panelCPUHist {
                 Divider()
                 if d.panelBattery, model.battery.isPresent {
-                    row("Battery", model.battery.percent.map { String(format: "%.0f%%", $0) } ?? "N/A")
+                    if let percent = model.battery.percent {
+                        meterRow("Battery", String(format: "%.0f%%", percent), percent: percent, tint: .battery)
+                    } else {
+                        row("Battery", "N/A")
+                    }
                 }
                 if d.panelDisk {
                     storageRow
@@ -1332,21 +1365,24 @@ struct StatusHomeView: View {
                     Button {
                         model.openMemoryRoom()
                     } label: {
-                        HStack {
-                            Text("Memory").foregroundStyle(.secondary)
-                            Spacer()
-                            Text(String(format: "%.0f%% · %@", model.memory.usedPercent, model.memory.pressure))
-                                .font(.body.monospacedDigit())
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text("Memory").foregroundStyle(.secondary)
+                                Spacer()
+                                Text(String(format: "%.0f%% · %@", model.memory.usedPercent, model.memory.pressure))
+                                    .font(.body.monospacedDigit())
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            MeterBar(percent: model.memory.usedPercent, tint: .capacity)
                         }
                     }
                     .buttonStyle(.plain)
                     .help("Open RAM room")
                 }
                 if d.panelCPUHist {
-                    row("CPU hist", model.history.cpuSparkline)
+                    HistorySparkline(samples: model.history.samples)
                 }
             }
 
@@ -1412,7 +1448,7 @@ struct StatusHomeView: View {
                 Text(disk.totalBytes > 0 ? String(format: "%.0f%%", disk.usedPercent) : "N/A")
                     .font(.body.monospacedDigit())
             }
-            StorageFillBar(percent: disk.usedPercent)
+            MeterBar(percent: disk.usedPercent, tint: .capacity)
             Text(storageCaption(disk))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -1426,6 +1462,18 @@ struct StatusHomeView: View {
         return "\(TextFormat.bytes(disk.usedBytes)) of \(TextFormat.bytes(disk.totalBytes)) · \(TextFormat.bytes(disk.freeBytes)) free"
     }
 
+    private func meterRow(_ label: String, _ value: String, percent: Double, tint: MeterTint) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            row(label, value)
+            MeterBar(percent: percent, tint: tint)
+        }
+    }
+
+    /// 35 °C sits at the start of the bar; 100 °C fills it.
+    private func heatMeter(_ celsius: Double) -> Double {
+        min(100, max(0, (celsius - 35) / 65 * 100))
+    }
+
     private func row(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label).foregroundStyle(.secondary)
@@ -1435,8 +1483,17 @@ struct StatusHomeView: View {
     }
 }
 
-private struct StorageFillBar: View {
+private enum MeterTint {
+    case heat(Double)
+    case load
+    case capacity
+    case battery
+    case fan
+}
+
+private struct MeterBar: View {
     var percent: Double
+    var tint: MeterTint
 
     var body: some View {
         Capsule()
@@ -1445,13 +1502,12 @@ private struct StorageFillBar: View {
                 GeometryReader { geo in
                     Capsule()
                         .fill(fillColor)
-                        .frame(width: max(6, geo.size.width * fraction))
+                        .frame(width: max(4, geo.size.width * fraction))
                 }
             }
-            .frame(height: 8)
+            .frame(height: 5)
             .clipShape(Capsule())
-            .accessibilityLabel("Storage used")
-            .accessibilityValue(String(format: "%.0f percent", percent))
+            .accessibilityValue(String(format: "%.0f percent", min(100, max(0, percent))))
     }
 
     private var fraction: CGFloat {
@@ -1459,9 +1515,101 @@ private struct StorageFillBar: View {
     }
 
     private var fillColor: Color {
-        if percent >= 90 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
-        if percent >= 75 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
-        return Color(red: 0.22, green: 0.72, blue: 0.42)
+        switch tint {
+        case .heat(let celsius):
+            if celsius >= 88 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            if celsius >= 78 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
+            if celsius >= 65 { return Color(red: 0.92, green: 0.75, blue: 0.12) }
+            return Color(red: 0.22, green: 0.78, blue: 0.42)
+        case .load, .fan:
+            if percent >= 85 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            if percent >= 60 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
+            return Color(red: 0.20, green: 0.62, blue: 0.95)
+        case .capacity:
+            if percent >= 90 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            if percent >= 75 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
+            return Color(red: 0.22, green: 0.72, blue: 0.42)
+        case .battery:
+            if percent <= 20 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+            return Color(red: 0.22, green: 0.72, blue: 0.42)
+        }
+    }
+}
+
+/// One-hour CPU temperature and load, drawn instead of the text sparkline.
+private struct HistorySparkline: View {
+    var samples: [HistorySample]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text("Last hour")
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                legend(Color(red: 0.95, green: 0.55, blue: 0.15), "CPU")
+                legend(Color(red: 0.20, green: 0.62, blue: 0.95), "Load")
+            }
+            .font(.caption)
+            Canvas { context, size in
+                let plot = CGRect(x: 0, y: 3, width: size.width, height: max(1, size.height - 6))
+                guard let start = samples.first?.timestamp, let end = samples.last?.timestamp else { return }
+                let cpu = samples.compactMap { sample -> (Date, Double)? in
+                    guard let value = sample.cpuCelsius else { return nil }
+                    return (sample.timestamp, value)
+                }
+                let load = samples.compactMap { sample -> (Date, Double)? in
+                    guard let value = sample.cpuLoadPercent else { return nil }
+                    return (sample.timestamp, value)
+                }
+                stroke(cpu, in: plot, from: start, to: end, low: 30, high: 100, color: Color(red: 0.95, green: 0.55, blue: 0.15), context: context)
+                stroke(load, in: plot, from: start, to: end, low: 0, high: 100, color: Color(red: 0.20, green: 0.62, blue: 0.95), context: context)
+            }
+            .frame(height: 36)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(0.04))
+            )
+            if samples.count < 2 {
+                Text("Collecting samples")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func legend(_ color: Color, _ title: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(title).foregroundStyle(.secondary)
+        }
+    }
+
+    private func stroke(
+        _ points: [(Date, Double)],
+        in plot: CGRect,
+        from start: Date,
+        to end: Date,
+        low: Double,
+        high: Double,
+        color: Color,
+        context: GraphicsContext
+    ) {
+        guard points.count >= 2 else { return }
+        let span = max(end.timeIntervalSince(start), 1)
+        let valueSpan = max(high - low, 1)
+        var path = Path()
+        for (index, point) in points.enumerated() {
+            let x = plot.minX + CGFloat(point.0.timeIntervalSince(start) / span) * plot.width
+            let fraction = min(1, max(0, (point.1 - low) / valueSpan))
+            let y = plot.maxY - CGFloat(fraction) * plot.height
+            let next = CGPoint(x: x, y: y)
+            if index == 0 {
+                path.move(to: next)
+            } else {
+                path.addLine(to: next)
+            }
+        }
+        context.stroke(path, with: .color(color), lineWidth: 1.5)
     }
 }
 
@@ -1761,7 +1909,7 @@ struct AboutSection: View {
                     .font(.caption)
             }
 
-            Text("Open-source company · MIT")
+            Text("Open-source · AGPL-3.0")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
