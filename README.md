@@ -34,6 +34,10 @@ Temps, fans, storage, and allocatable RAM stay on this Mac. The menu bar, the `m
 
 ---
 
+## What's new in 0.4.18
+
+The project is licensed under **GNU AGPL-3.0**. The menu bar draws meters for heat, load, fans, storage, and memory, plus a one-hour chart. **Make N GB** asks before it quits apps. `mf update` installs a published tag and reopens the menu bar.
+
 ## What's new in 0.4.17
 
 **Storage** shows how full the startup volume is.

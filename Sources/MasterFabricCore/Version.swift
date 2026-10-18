@@ -2,7 +2,7 @@ import Foundation
 
 /// Single source of truth for the product version (keep in sync with root `VERSION`).
 public enum AppVersion {
-    public static let current = "0.4.17"
+    public static let current = "0.4.18"
     /// Canonical GitHub owner. The previous owner name redirects here.
     public static let repoOwner = "masterfabric"
     public static let legacyRepoOwner = "gurkanfikretgunak"
