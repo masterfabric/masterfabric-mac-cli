@@ -68,6 +68,7 @@ public struct MemoryInfo: Sendable, Codable, Equatable {
 
 public struct DiskInfo: Sendable, Codable, Equatable {
     public var path: String
+    public var volumeName: String
     public var totalBytes: UInt64
     public var freeBytes: UInt64
     public var usedBytes: UInt64
@@ -77,11 +78,27 @@ public struct DiskInfo: Sendable, Codable, Equatable {
         return Double(usedBytes) / Double(totalBytes) * 100
     }
 
-    public init(path: String, totalBytes: UInt64, freeBytes: UInt64, usedBytes: UInt64) {
+    public init(
+        path: String,
+        totalBytes: UInt64,
+        freeBytes: UInt64,
+        usedBytes: UInt64,
+        volumeName: String = ""
+    ) {
         self.path = path
+        self.volumeName = volumeName
         self.totalBytes = totalBytes
         self.freeBytes = freeBytes
         self.usedBytes = usedBytes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decode(String.self, forKey: .path)
+        volumeName = try c.decodeIfPresent(String.self, forKey: .volumeName) ?? ""
+        totalBytes = try c.decode(UInt64.self, forKey: .totalBytes)
+        freeBytes = try c.decode(UInt64.self, forKey: .freeBytes)
+        usedBytes = try c.decode(UInt64.self, forKey: .usedBytes)
     }
 }
 
@@ -488,6 +505,8 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
     public var showFanBadge: Bool
     public var showBattery: Bool
     public var showMemory: Bool
+    /// Startup volume used percent on the status strip (e.g. Disk 72%).
+    public var showDisk: Bool
     /// Drop "CPU" / "Fan" prefixes (52° instead of CPU 52°).
     public var showShortLabels: Bool
     /// Color temperature / load by heat and utilization.
@@ -504,6 +523,8 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
     public var panelFanControl: Bool
     public var panelBattery: Bool
     public var panelMemory: Bool
+    /// Startup volume capacity bar in the dropdown.
+    public var panelDisk: Bool
     public var panelCPUHist: Bool
     public var panelAlerts: Bool
     public var panelIntegrations: Bool
@@ -520,6 +541,7 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         showFanBadge: true,
         showBattery: false,
         showMemory: false,
+        showDisk: false,
         showShortLabels: false,
         colorizeHeat: true,
         panelModel: true,
@@ -532,6 +554,7 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         panelFanControl: true,
         panelBattery: true,
         panelMemory: true,
+        panelDisk: true,
         panelCPUHist: true,
         panelAlerts: true,
         panelIntegrations: true,
@@ -548,6 +571,7 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         showFanBadge: Bool,
         showBattery: Bool,
         showMemory: Bool = false,
+        showDisk: Bool = false,
         showShortLabels: Bool = false,
         colorizeHeat: Bool = true,
         panelModel: Bool,
@@ -560,6 +584,7 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         panelFanControl: Bool,
         panelBattery: Bool,
         panelMemory: Bool,
+        panelDisk: Bool = true,
         panelCPUHist: Bool,
         panelAlerts: Bool,
         panelIntegrations: Bool,
@@ -574,6 +599,7 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         self.showFanBadge = showFanBadge
         self.showBattery = showBattery
         self.showMemory = showMemory
+        self.showDisk = showDisk
         self.showShortLabels = showShortLabels
         self.colorizeHeat = colorizeHeat
         self.panelModel = panelModel
@@ -586,6 +612,7 @@ public struct MenuBarDisplayConfig: Sendable, Codable, Equatable {
         self.panelFanControl = panelFanControl
         self.panelBattery = panelBattery
         self.panelMemory = panelMemory
+        self.panelDisk = panelDisk
         self.panelCPUHist = panelCPUHist
         self.panelAlerts = panelAlerts
         self.panelIntegrations = panelIntegrations
