@@ -32,6 +32,19 @@ Built for developers who want local hardware context inside their coding agents 
 
 ---
 
+## What's new in 0.4.17
+
+**Storage** shows how full the startup volume is.
+
+The menu bar dropdown lists the volume name, a fill bar, and used / total / free space. The bar turns amber from 75% and red from 90%. Settings → **Storage** also puts `Disk 72%` on the status strip.
+
+```bash
+mf disk
+mf disk --json
+```
+
+`menubar.panel_disk` defaults to on. `menubar.show_disk` defaults to off.
+
 ## What's new in 0.4.16
 
 **RAM room** shows how many bytes a new model can still allocate, then frees that space one app at a time.
@@ -175,7 +188,7 @@ App bundle: `~/.local/MasterFabricMenuBar.app` (no Dock icon).
 
 - **Fan control** — **Auto** / **Full** for CPU + GPU fans (one-time admin helper install)
 - **RAM room** — memory-chip button, or the Memory row. Allocatable bytes, a 60-second graph, and a **Make N GB** target. See [What's new in 0.4.16](#whats-new-in-0416).
-- **Storage** — startup volume fill bar (used percent, used of total, free). Settings → **Storage** also puts `Disk 72%` on the status strip (`menubar.show_disk`, `menubar.panel_disk`).
+- **Storage** — startup volume fill bar (used percent, used of total, free). Settings → **Storage** also puts `Disk 72%` on the status strip (`menubar.show_disk`, `menubar.panel_disk`). See [What's new in 0.4.17](#whats-new-in-0417).
 - **Settings** — gear next to Quit; saved under `[menubar]` in `config.toml`
 - **Local notifications** — Settings → **Notifications** (top): off by default; turning On asks macOS for permission; **Test notification** sends a sample banner (`alerts.notify_local`)
 - **Alerts** — tap thermometer / GPU / fan / memory / disk / battery / power icons to edit thresholds; optional **Send to Integrations**
