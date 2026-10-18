@@ -4,6 +4,7 @@ import MasterFabricCore
 @MainActor
 final class MemoryRoomFormState: ObservableObject {
     @Published var confirmPID: Int32 = 0
+    @Published var confirmMakeRoom = false
 }
 
 /// RAM usage plus one-at-a-time quit, so a model has memory it can allocate.
@@ -45,7 +46,7 @@ struct MemoryRoomView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Choosing a target above the current room frees apps until that much is allocatable. Cursor and this agent stay.")
+            Text("Make N GB asks before it quits eligible apps, one at a time, until that much is allocatable. Cursor and this menu bar stay.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -75,6 +76,7 @@ struct MemoryRoomView: View {
         HStack {
             Button {
                 form.confirmPID = 0
+                form.confirmMakeRoom = false
                 model.closeMemoryRoom()
             } label: {
                 Image(systemName: "chevron.left")
@@ -180,18 +182,45 @@ struct MemoryRoomView: View {
     }
 
     private func makeRoomButton(available: UInt64) -> some View {
+        let gigabytes = Int(model.displayConfig.modelRoomTargetGB.rounded())
         let target = MemoryRoomService.targetBytes(gigabytes: model.displayConfig.modelRoomTargetGB)
         let ready = available >= target && !model.isMakingRoom
-        return Button {
-            model.toggleMakeRoom()
-        } label: {
-            Text(model.isMakingRoom ? "Stop" : (ready ? "Room ready" : "Make \(Int(model.displayConfig.modelRoomTargetGB.rounded())) GB"))
-                .frame(maxWidth: .infinity)
+        return VStack(alignment: .leading, spacing: 6) {
+            if form.confirmMakeRoom, !model.isMakingRoom {
+                Text("Free RAM until \(gigabytes) GB is allocatable?")
+                    .font(.caption.weight(.semibold))
+                Text("This quits the largest eligible apps one at a time. Cursor and this menu bar stay open. Unsaved work in those apps can be lost.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Cancel") { form.confirmMakeRoom = false }
+                        .buttonStyle(.borderless)
+                    Spacer()
+                    Button("Free RAM") {
+                        form.confirmMakeRoom = false
+                        model.toggleMakeRoom()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            } else {
+                Button {
+                    if model.isMakingRoom {
+                        model.toggleMakeRoom()
+                    } else {
+                        form.confirmMakeRoom = true
+                    }
+                } label: {
+                    Text(model.isMakingRoom ? "Stop" : (ready ? "Room ready" : "Make \(gigabytes) GB"))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .disabled(ready)
+                .help("Ask before quitting the largest apps until the target RAM is free")
+            }
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.regular)
-        .disabled(ready)
-        .help("Quit the largest apps one by one until the target RAM is free")
     }
 
     private func targetRow(available: UInt64) -> some View {

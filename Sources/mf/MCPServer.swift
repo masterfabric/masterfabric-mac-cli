@@ -215,7 +215,7 @@ final class MCPServer {
             ),
             tool(
                 name: "run_update",
-                description: "Upgrade MasterFabric from the open-source GitHub install script. Returns JSON with performed/check/detail.",
+                description: "Install the latest GitHub release tag, then reopen the menu bar if it was running. Returns JSON with performed/check/detail.",
                 properties: [
                     "force": [
                         "type": "boolean",

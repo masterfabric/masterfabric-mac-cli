@@ -685,7 +685,7 @@ extension MF {
 
     struct Update: ParsableCommand {
         static let configuration = CommandConfiguration(
-            abstract: "Upgrade from the open-source GitHub repo (runs scripts/install.sh)."
+            abstract: "Upgrade to the latest GitHub release tag and reopen the menu bar if it was running."
         )
 
         @Flag(name: .long, help: "Reinstall even when already up to date.")
@@ -710,7 +710,11 @@ extension MF {
                     print("GitHub latest: v\(s.dropFirst("github_ok:".count))")
                     fflush(stdout)
                 case let s where s.hasPrefix("installing:"):
-                    print("Installing into \(s.dropFirst("installing:".count)) …")
+                    print("Installing \(s.dropFirst("installing:".count)) …")
+                    fflush(stdout)
+                case let s where s.hasPrefix("log:"):
+                    print("Log: \(s.dropFirst("log:".count))")
+                    print("Building the release. This can take a few minutes.")
                     fflush(stdout)
                 case "install_finished":
                     print("Install finished — verifying…")

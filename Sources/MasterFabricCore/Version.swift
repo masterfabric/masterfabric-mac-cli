@@ -3,15 +3,30 @@ import Foundation
 /// Single source of truth for the product version (keep in sync with root `VERSION`).
 public enum AppVersion {
     public static let current = "0.4.17"
-    public static let repoOwner = "gurkanfikretgunak"
+    /// Canonical GitHub owner. The previous owner name redirects here.
+    public static let repoOwner = "masterfabric"
+    public static let legacyRepoOwner = "gurkanfikretgunak"
     public static let repoName = "masterfabric-mac-cli"
     public static var repoURL: String { "https://github.com/\(repoOwner)/\(repoName)" }
+    public static var gitCloneURL: String { "\(repoURL).git" }
     public static var releasesURL: String { "\(repoURL)/releases" }
     public static var apiReleasesLatest: String {
         "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/latest"
     }
     public static var apiTags: String {
         "https://api.github.com/repos/\(repoOwner)/\(repoName)/tags?per_page=5"
+    }
+
+    public static func releasesLatestURL(owner: String) -> String {
+        "https://api.github.com/repos/\(owner)/\(repoName)/releases/latest"
+    }
+
+    public static func tagsURL(owner: String) -> String {
+        "https://api.github.com/repos/\(owner)/\(repoName)/tags?per_page=5"
+    }
+
+    public static func repoURL(owner: String) -> String {
+        "https://github.com/\(owner)/\(repoName)"
     }
 }
 
@@ -46,65 +61,95 @@ public struct VersionCheckResult: Sendable, Codable, Equatable {
 public enum VersionService {
     /// Compare local version to the open-source GitHub repo (latest release, else newest tag).
     public static func check(local: String = AppVersion.current) -> VersionCheckResult {
-        do {
-            if let release = try fetchLatestRelease() {
-                let remote = normalize(release)
-                let cmp = compare(remote, normalize(local))
-                let available = cmp == .orderedDescending
-                let detail: String
-                switch cmp {
-                case .orderedDescending:
-                    detail = "Update available: v\(local) → v\(remote)"
-                case .orderedSame:
-                    detail = "Up to date with GitHub release v\(remote)"
-                case .orderedAscending:
-                    detail = "Local v\(local) is newer than GitHub release v\(remote) (unreleased / ahead)"
+        let owners = [AppVersion.repoOwner, AppVersion.legacyRepoOwner]
+        var lastError: Error?
+        for owner in owners {
+            do {
+                if let found = try lookup(owner: owner, local: local) {
+                    return found
                 }
-                return VersionCheckResult(
-                    local: local,
-                    remote: remote,
-                    updateAvailable: available,
-                    source: "github-release",
-                    detail: detail
-                )
+            } catch {
+                lastError = error
             }
-            if let tag = try fetchLatestTag() {
-                let remote = normalize(tag)
-                let cmp = compare(remote, normalize(local))
-                let available = cmp == .orderedDescending
-                let detail: String
-                switch cmp {
-                case .orderedDescending:
-                    detail = "Newer tag on GitHub: v\(local) → v\(remote)"
-                case .orderedSame:
-                    detail = "Up to date with GitHub tag v\(remote)"
-                case .orderedAscending:
-                    detail = "Local v\(local) is newer than GitHub tag v\(remote) (unreleased / ahead)"
-                }
-                return VersionCheckResult(
-                    local: local,
-                    remote: remote,
-                    updateAvailable: available,
-                    source: "github-tag",
-                    detail: detail
-                )
-            }
-            return VersionCheckResult(
-                local: local,
-                remote: nil,
-                updateAvailable: false,
-                source: "github",
-                detail: "No releases or tags found yet on \(AppVersion.repoURL)"
-            )
-        } catch {
+        }
+        if let lastError {
             return VersionCheckResult(
                 local: local,
                 remote: nil,
                 updateAvailable: false,
                 source: "error",
-                detail: "Could not reach GitHub: \(error.localizedDescription)"
+                detail: "Could not reach GitHub: \(lastError.localizedDescription)"
             )
         }
+        return VersionCheckResult(
+            local: local,
+            remote: nil,
+            updateAvailable: false,
+            source: "github",
+            detail: "No releases or tags found yet on \(AppVersion.repoURL)"
+        )
+    }
+
+    private static func lookup(owner: String, local: String) throws -> VersionCheckResult? {
+        let repoURL = AppVersion.repoURL(owner: owner)
+        let releasesURL = "\(repoURL)/releases"
+        if let release = try fetchLatestRelease(owner: owner) {
+            return compared(
+                remoteRaw: release,
+                local: local,
+                source: "github-release",
+                repoURL: repoURL,
+                releasesURL: releasesURL,
+                newer: "Update available: v\(local) → v",
+                same: "Up to date with GitHub release v",
+                older: "Local v\(local) is newer than GitHub release v"
+            )
+        }
+        if let tag = try fetchLatestTag(owner: owner) {
+            return compared(
+                remoteRaw: tag,
+                local: local,
+                source: "github-tag",
+                repoURL: repoURL,
+                releasesURL: releasesURL,
+                newer: "Newer tag on GitHub: v\(local) → v",
+                same: "Up to date with GitHub tag v",
+                older: "Local v\(local) is newer than GitHub tag v"
+            )
+        }
+        return nil
+    }
+
+    private static func compared(
+        remoteRaw: String,
+        local: String,
+        source: String,
+        repoURL: String,
+        releasesURL: String,
+        newer: String,
+        same: String,
+        older: String
+    ) -> VersionCheckResult {
+        let remote = normalize(remoteRaw)
+        let cmp = compare(remote, normalize(local))
+        let detail: String
+        switch cmp {
+        case .orderedDescending:
+            detail = "\(newer)\(remote)"
+        case .orderedSame:
+            detail = "\(same)\(remote)"
+        case .orderedAscending:
+            detail = "\(older)\(remote) (unreleased / ahead)"
+        }
+        return VersionCheckResult(
+            local: local,
+            remote: remote,
+            updateAvailable: cmp == .orderedDescending,
+            source: source,
+            detail: detail,
+            repoURL: repoURL,
+            releasesURL: releasesURL
+        )
     }
 
     public static func format(_ result: VersionCheckResult) -> String {
@@ -128,8 +173,8 @@ public enum VersionService {
 
     // MARK: - GitHub
 
-    private static func fetchLatestRelease() throws -> String? {
-        guard let url = URL(string: AppVersion.apiReleasesLatest) else { return nil }
+    private static func fetchLatestRelease(owner: String) throws -> String? {
+        guard let url = URL(string: AppVersion.releasesLatestURL(owner: owner)) else { return nil }
         let (data, response) = try httpGET(url)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 404 { return nil }
@@ -143,10 +188,11 @@ public enum VersionService {
         return nil
     }
 
-    private static func fetchLatestTag() throws -> String? {
-        guard let url = URL(string: AppVersion.apiTags) else { return nil }
+    private static func fetchLatestTag(owner: String) throws -> String? {
+        guard let url = URL(string: AppVersion.tagsURL(owner: owner)) else { return nil }
         let (data, response) = try httpGET(url)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 404 { return nil }
         guard (200...299).contains(status) else {
             throw VersionError.http(status, String(data: data, encoding: .utf8) ?? "")
         }
@@ -157,7 +203,21 @@ public enum VersionService {
         return name
     }
 
-    private static func httpGET(_ url: URL) throws -> (Data, URLResponse) {
+    /// Follow GitHub's repo-move redirects. A 301 body is not a release.
+    private static func httpGET(_ url: URL, hops: Int = 0) throws -> (Data, URLResponse) {
+        let (data, response) = try httpGETOnce(url)
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
+        if hops < 5,
+           (300...399).contains(status),
+           let location = http?.value(forHTTPHeaderField: "Location"),
+           let next = URL(string: location, relativeTo: url)?.absoluteURL {
+            return try httpGET(next, hops: hops + 1)
+        }
+        return (data, response)
+    }
+
+    private static func httpGETOnce(_ url: URL) throws -> (Data, URLResponse) {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -166,7 +226,7 @@ public enum VersionService {
 
         let box = VersionSyncBox()
         let sem = DispatchSemaphore(value: 0)
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = VersionHTTP.session.dataTask(with: request) { data, response, error in
             box.data = data
             box.response = response
             box.error = error
@@ -221,7 +281,7 @@ public enum VersionService {
     }
 }
 
-/// Install / upgrade from the open-source GitHub repo via `scripts/install.sh`.
+/// Install / upgrade from the published GitHub release tag.
 public enum UpdateService {
     public static var installScriptURL: String {
         "\(AppVersion.repoURL)/raw/main/scripts/install.sh"
@@ -255,7 +315,7 @@ public enum UpdateService {
         }
     }
 
-    /// Check GitHub; if newer (or `force`), run the official install script.
+    /// Check GitHub; if newer (or `force`), install that release tag and reopen the menu bar when it was running.
     public static func update(
         force: Bool = false,
         prefix: String? = nil,
@@ -289,24 +349,31 @@ public enum UpdateService {
                 steps: steps
             )
         }
+        guard let remote = check.remote else {
+            return Result(
+                performed: false,
+                localBefore: before,
+                localAfter: nil,
+                check: check,
+                output: "",
+                detail: check.detail,
+                steps: steps
+            )
+        }
 
         let envPrefix = prefix
             ?? (ProcessInfo.processInfo.environment["MASTERFABRIC_PREFIX"] ?? "\(NSHomeDirectory())/.local")
+        let ref = UpdateInstaller.releaseRef(remote)
         step("installing:\(envPrefix)")
-        let script = """
-        set -euo pipefail
-        export MASTERFABRIC_PREFIX="\(envPrefix)"
-        curl -fsSL "\(installScriptURL)" | bash
-        """
+        step("log:\(UpdateInstaller.logFilePath)")
 
         do {
-            let output = try runShell(script)
+            let output = try UpdateInstaller.runSynchronously(ref: ref, prefix: envPrefix)
             step("install_finished")
-            let after = readInstalledVersion(prefix: envPrefix) ?? check.remote
-            step("verify:\(after ?? "unknown")")
-            let ok = after.map { VersionService.normalize($0) } ?? ""
-            let expected = check.remote.map { VersionService.normalize($0) } ?? ""
-            let verified = !ok.isEmpty && (expected.isEmpty || ok == expected || !VersionService.isRemoteNewer(remote: expected, local: ok))
+            let after = readInstalledVersion(prefix: envPrefix) ?? VersionService.normalize(remote)
+            step("verify:\(after)")
+            let expected = VersionService.normalize(remote)
+            let verified = after == expected || !VersionService.isRemoteNewer(remote: expected, local: after)
             return Result(
                 performed: true,
                 localBefore: before,
@@ -314,18 +381,19 @@ public enum UpdateService {
                 check: check,
                 output: output,
                 detail: verified
-                    ? "Update OK: v\(before) → v\(after ?? "?")"
-                    : "Install finished but version verify unclear (before v\(before), after \(after ?? "unknown")). Run: \(envPrefix)/bin/mf version",
+                    ? "Update OK: v\(before) → v\(after)"
+                    : "Install finished but version verify unclear (before v\(before), after v\(after)). Run: \(envPrefix)/bin/mf version",
                 steps: steps
             )
         } catch {
             step("install_failed")
+            let tail = UpdateInstaller.failureTail()
             return Result(
                 performed: false,
                 localBefore: before,
                 localAfter: nil,
                 check: check,
-                output: "",
+                output: tail,
                 detail: "Update failed: \(error.localizedDescription)",
                 steps: steps
             )
@@ -337,12 +405,11 @@ public enum UpdateService {
         if let after = result.localAfter, result.performed {
             lines.append("Installed binary: v\(after)")
         }
+        if result.steps.contains(where: { $0.hasPrefix("log:") || $0 == "install_failed" }) {
+            lines.append("Log: \(UpdateInstaller.logFilePath)")
+        }
         if !result.steps.isEmpty {
             lines.append("Steps: \(result.steps.joined(separator: " → "))")
-        }
-        if !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            lines.append("")
-            lines.append(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return lines.joined(separator: "\n")
     }
@@ -355,42 +422,28 @@ public enum UpdateService {
         process.arguments = ["version", "--json"]
         let out = Pipe()
         process.standardOutput = out
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+        let group = DispatchGroup()
+        group.enter()
+        let box = VersionSyncBox()
+        DispatchQueue.global(qos: .userInitiated).async {
+            box.data = out.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
         do {
             try process.run()
             process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
+            group.wait()
+            guard process.terminationStatus == 0, let data = box.data else { return nil }
             guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let version = obj["version"] as? String
             else { return nil }
             return VersionService.normalize(version)
         } catch {
+            try? out.fileHandleForWriting.close()
+            group.wait()
             return nil
         }
-    }
-
-    private static func runShell(_ script: String) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-lc", script]
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
-        try process.run()
-        process.waitUntilExit()
-        let stdout = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let combined = (stdout + stderr).trimmingCharacters(in: .whitespacesAndNewlines)
-        if process.terminationStatus != 0 {
-            throw NSError(
-                domain: "MasterFabricUpdate",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: combined.isEmpty ? "install.sh failed" : combined]
-            )
-        }
-        return combined
     }
 }
 
@@ -398,4 +451,25 @@ private final class VersionSyncBox: @unchecked Sendable {
     var data: Data?
     var response: URLResponse?
     var error: Error?
+}
+
+/// Surface GitHub 301/302 to `httpGET` instead of treating the redirect body as a failed release lookup.
+private final class VersionHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 20
+        config.httpShouldSetCookies = false
+        config.urlCache = nil
+        return URLSession(configuration: config, delegate: VersionHTTP(), delegateQueue: nil)
+    }()
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
 }
