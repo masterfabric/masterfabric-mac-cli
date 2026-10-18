@@ -8,6 +8,7 @@ public enum StatusBarTokenKind: Sendable, Equatable {
     case fan
     case battery
     case memory
+    case disk
 }
 
 public struct StatusBarToken: Sendable, Equatable {
@@ -28,6 +29,7 @@ public enum StatusBarComposer {
         load: CPULoadInfo?,
         battery: BatteryInfo?,
         memory: MemoryInfo?,
+        disk: DiskInfo? = nil,
         display: MenuBarDisplayConfig
     ) -> [StatusBarToken] {
         switch display.style {
@@ -80,6 +82,10 @@ public enum StatusBarComposer {
             let value = String(format: "%.0f%%", memory.usedPercent)
             items.append(StatusBarToken(text: short ? "M\(value)" : "Mem \(value)", kind: .memory, value: memory.usedPercent))
         }
+        if display.showDisk, let disk, disk.totalBytes > 0 {
+            let value = String(format: "%.0f%%", disk.usedPercent)
+            items.append(StatusBarToken(text: short ? "D\(value)" : "Disk \(value)", kind: .disk, value: disk.usedPercent))
+        }
         if items.isEmpty {
             return [StatusBarToken(text: "mf", kind: .cpuTemp)]
         }
@@ -94,6 +100,7 @@ public enum StatusItemRenderer {
         load: CPULoadInfo,
         battery: BatteryInfo?,
         memory: MemoryInfo?,
+        disk: DiskInfo? = nil,
         display: MenuBarDisplayConfig,
         isFull: Bool,
         updateAvailable: Bool = false
@@ -103,6 +110,7 @@ public enum StatusItemRenderer {
             load: load,
             battery: battery,
             memory: memory,
+            disk: disk,
             display: display
         )
         let fansPresent = !status.fans.isEmpty
@@ -162,7 +170,7 @@ public enum StatusItemRenderer {
         switch token.kind {
         case .cpuTemp, .gpuTemp:
             return heatColor(celsius: token.value)
-        case .load, .memory:
+        case .load, .memory, .disk:
             return loadColor(percent: token.value ?? 0)
         case .battery:
             if let v = token.value, v <= 20 {

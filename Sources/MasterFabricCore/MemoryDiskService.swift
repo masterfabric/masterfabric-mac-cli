@@ -69,6 +69,7 @@ public enum DiskService {
     public static func current(path: String = "/") -> DiskInfo {
         do {
             let values = try URL(fileURLWithPath: path).resourceValues(forKeys: [
+                .volumeNameKey,
                 .volumeTotalCapacityKey,
                 .volumeAvailableCapacityForImportantUsageKey,
                 .volumeAvailableCapacityKey,
@@ -79,7 +80,13 @@ public enum DiskService {
                     ?? Int64(values.volumeAvailableCapacity ?? 0)
             )
             let used = total > free ? total - free : 0
-            return DiskInfo(path: path, totalBytes: total, freeBytes: free, usedBytes: used)
+            return DiskInfo(
+                path: path,
+                totalBytes: total,
+                freeBytes: free,
+                usedBytes: used,
+                volumeName: values.volumeName ?? ""
+            )
         } catch {
             return DiskInfo(path: path, totalBytes: 0, freeBytes: 0, usedBytes: 0)
         }

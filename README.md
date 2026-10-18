@@ -175,6 +175,7 @@ App bundle: `~/.local/MasterFabricMenuBar.app` (no Dock icon).
 
 - **Fan control** — **Auto** / **Full** for CPU + GPU fans (one-time admin helper install)
 - **RAM room** — memory-chip button, or the Memory row. Allocatable bytes, a 60-second graph, and a **Make N GB** target. See [What's new in 0.4.16](#whats-new-in-0416).
+- **Storage** — startup volume fill bar (used percent, used of total, free). Settings → **Storage** also puts `Disk 72%` on the status strip (`menubar.show_disk`, `menubar.panel_disk`).
 - **Settings** — gear next to Quit; saved under `[menubar]` in `config.toml`
 - **Local notifications** — Settings → **Notifications** (top): off by default; turning On asks macOS for permission; **Test notification** sends a sample banner (`alerts.notify_local`)
 - **Alerts** — tap thermometer / GPU / fan / memory / disk / battery / power icons to edit thresholds; optional **Send to Integrations**

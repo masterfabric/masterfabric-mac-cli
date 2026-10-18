@@ -156,6 +156,7 @@ enum MenuBarStatusIcon {
         load: CPULoadInfo,
         battery: BatteryInfo?,
         memory: MemoryInfo?,
+        disk: DiskInfo? = nil,
         display: MenuBarDisplayConfig,
         isFull: Bool,
         updateAvailable: Bool = false
@@ -165,6 +166,7 @@ enum MenuBarStatusIcon {
             load: load,
             battery: battery,
             memory: memory,
+            disk: disk,
             display: display,
             isFull: isFull,
             updateAvailable: updateAvailable
@@ -778,6 +780,7 @@ final class MenuBarModel: ObservableObject {
             load: load,
             battery: battery,
             memory: memory,
+            disk: disk,
             display: mb
         )
         let fansPresent = !status.fans.isEmpty
@@ -791,6 +794,7 @@ final class MenuBarModel: ObservableObject {
             load: load,
             battery: battery,
             memory: memory,
+            disk: disk,
             display: mb,
             isFull: fanIsFull,
             updateAvailable: updateAvailable
@@ -1316,10 +1320,13 @@ struct StatusHomeView: View {
                 }
             }
 
-            if d.panelBattery || d.panelMemory || d.panelCPUHist {
+            if d.panelBattery || d.panelMemory || d.panelDisk || d.panelCPUHist {
                 Divider()
                 if d.panelBattery, model.battery.isPresent {
                     row("Battery", model.battery.percent.map { String(format: "%.0f%%", $0) } ?? "N/A")
+                }
+                if d.panelDisk {
+                    storageRow
                 }
                 if d.panelMemory {
                     Button {
@@ -1395,12 +1402,66 @@ struct StatusHomeView: View {
         }
     }
 
+    private var storageRow: some View {
+        let disk = model.disk
+        let name = disk.volumeName.isEmpty ? "Storage" : disk.volumeName
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(name).foregroundStyle(.secondary)
+                Spacer()
+                Text(disk.totalBytes > 0 ? String(format: "%.0f%%", disk.usedPercent) : "N/A")
+                    .font(.body.monospacedDigit())
+            }
+            StorageFillBar(percent: disk.usedPercent)
+            Text(storageCaption(disk))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .help("Startup volume — how full this Mac’s storage is")
+    }
+
+    private func storageCaption(_ disk: DiskInfo) -> String {
+        guard disk.totalBytes > 0 else { return "Capacity unavailable" }
+        return "\(TextFormat.bytes(disk.usedBytes)) of \(TextFormat.bytes(disk.totalBytes)) · \(TextFormat.bytes(disk.freeBytes)) free"
+    }
+
     private func row(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label).foregroundStyle(.secondary)
             Spacer()
             Text(value).font(.body.monospacedDigit())
         }
+    }
+}
+
+private struct StorageFillBar: View {
+    var percent: Double
+
+    var body: some View {
+        Capsule()
+            .fill(Color.primary.opacity(0.08))
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(fillColor)
+                        .frame(width: max(6, geo.size.width * fraction))
+                }
+            }
+            .frame(height: 8)
+            .clipShape(Capsule())
+            .accessibilityLabel("Storage used")
+            .accessibilityValue(String(format: "%.0f percent", percent))
+    }
+
+    private var fraction: CGFloat {
+        CGFloat(min(1, max(0, percent / 100)))
+    }
+
+    private var fillColor: Color {
+        if percent >= 90 { return Color(red: 0.92, green: 0.28, blue: 0.25) }
+        if percent >= 75 { return Color(red: 0.95, green: 0.55, blue: 0.15) }
+        return Color(red: 0.22, green: 0.72, blue: 0.42)
     }
 }
 
@@ -1526,6 +1587,7 @@ struct MenuBarSettingsView: View {
                 load: model.load,
                 battery: model.battery,
                 memory: model.memory,
+                disk: model.disk,
                 display: form.draft,
                 isFull: model.fanIsFull,
                 updateAvailable: model.pendingUpdate?.updateAvailable == true
@@ -1573,6 +1635,7 @@ struct MenuBarSettingsView: View {
                 toggle("A/F badge", form.draft.showFanBadge) { form.draft.showFanBadge = $0; preview(form.draft) }
                 toggle("Battery", form.draft.showBattery) { form.draft.showBattery = $0; preview(form.draft) }
                 toggle("Memory", form.draft.showMemory) { form.draft.showMemory = $0; preview(form.draft) }
+                toggle("Storage", form.draft.showDisk) { form.draft.showDisk = $0; preview(form.draft) }
                 toggle("Short labels", form.draft.showShortLabels) { form.draft.showShortLabels = $0; preview(form.draft) }
                 toggle("Heat color", form.draft.colorizeHeat) { form.draft.colorizeHeat = $0; preview(form.draft) }
             }

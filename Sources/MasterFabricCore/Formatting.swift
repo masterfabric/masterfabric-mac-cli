@@ -97,6 +97,7 @@ public enum TextFormat {
         load: CPULoadInfo? = nil,
         battery: BatteryInfo? = nil,
         memory: MemoryInfo? = nil,
+        disk: DiskInfo? = nil,
         display: MenuBarDisplayConfig = .default
     ) -> String {
         let tokens = StatusBarComposer.tokens(
@@ -104,6 +105,7 @@ public enum TextFormat {
             load: load,
             battery: battery,
             memory: memory,
+            disk: disk,
             display: display
         )
         let sep: String
@@ -176,8 +178,9 @@ public enum TextFormat {
     }
 
     public static func disk(_ d: DiskInfo) -> String {
-        """
-        Volume: \(d.path)
+        let name = d.volumeName.isEmpty ? d.path : d.volumeName
+        return """
+        Volume: \(name) (\(d.path))
         Used:   \(bytes(d.usedBytes)) / \(bytes(d.totalBytes)) (\(String(format: "%.1f", d.usedPercent))%)
         Free:   \(bytes(d.freeBytes))
         """

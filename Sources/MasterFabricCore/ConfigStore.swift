@@ -122,6 +122,7 @@ public enum ConfigStore {
                 case "show_fan_badge": config.menuBar.showFanBadge = value == "true"
                 case "show_battery": config.menuBar.showBattery = value == "true"
                 case "show_memory": config.menuBar.showMemory = value == "true"
+                case "show_disk": config.menuBar.showDisk = value == "true"
                 case "show_short_labels": config.menuBar.showShortLabels = value == "true"
                 case "colorize_heat": config.menuBar.colorizeHeat = value == "true"
                 case "panel_model": config.menuBar.panelModel = value == "true"
@@ -134,6 +135,7 @@ public enum ConfigStore {
                 case "panel_fan_control": config.menuBar.panelFanControl = value == "true"
                 case "panel_battery": config.menuBar.panelBattery = value == "true"
                 case "panel_memory": config.menuBar.panelMemory = value == "true"
+                case "panel_disk": config.menuBar.panelDisk = value == "true"
                 case "panel_cpu_hist": config.menuBar.panelCPUHist = value == "true"
                 case "panel_alerts": config.menuBar.panelAlerts = value == "true"
                 case "panel_integrations": config.menuBar.panelIntegrations = value == "true"
@@ -185,6 +187,7 @@ public enum ConfigStore {
         show_fan_badge = \(mb.showFanBadge)
         show_battery = \(mb.showBattery)
         show_memory = \(mb.showMemory)
+        show_disk = \(mb.showDisk)
         show_short_labels = \(mb.showShortLabels)
         colorize_heat = \(mb.colorizeHeat)
         panel_model = \(mb.panelModel)
@@ -197,6 +200,7 @@ public enum ConfigStore {
         panel_fan_control = \(mb.panelFanControl)
         panel_battery = \(mb.panelBattery)
         panel_memory = \(mb.panelMemory)
+        panel_disk = \(mb.panelDisk)
         panel_cpu_hist = \(mb.panelCPUHist)
         panel_alerts = \(mb.panelAlerts)
         panel_integrations = \(mb.panelIntegrations)
